@@ -62,7 +62,7 @@ scenario-miner-start: scenario-miner-build
 	kubectl patch deployment $(SCENARIO_MINER_DEPLOYMENT) \
 		--namespace $(SCENARIO_MINER_NAMESPACE) \
 		--type=strategic \
-		--patch-file=scenarios/miner/inject-patch.yaml
+		-p "$$(sed 's|aidevops-miner-scenario:latest|$(SCENARIO_MINER_IMAGE)|' scenarios/miner/inject-patch.yaml)"
 	kubectl rollout status deployment/$(SCENARIO_MINER_DEPLOYMENT) \
 		--namespace $(SCENARIO_MINER_NAMESPACE) --timeout=120s
 	mkdir -p scenarios/miner/.state
