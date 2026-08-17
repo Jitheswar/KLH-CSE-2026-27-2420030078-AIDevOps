@@ -3,6 +3,9 @@
 # The control-plane node is labelled ingress-ready=true and its 80/443 are
 # mapped out to the host, which is what the stock ingress-nginx "kind"
 # provider manifest (applied by `make cluster-up`) expects to bind to.
+# Prometheus's NodePort (deploy/prometheus/04-service.yaml) is mapped out
+# the same way, since the platform runs on the host until ticket 13 and has
+# no other route in.
 kind: Cluster
 apiVersion: kind.x-k8s.io/v1alpha4
 name: aidevops
@@ -20,4 +23,7 @@ nodes:
         protocol: TCP
       - containerPort: 443
         hostPort: 8443
+        protocol: TCP
+      - containerPort: 30090
+        hostPort: 9090
         protocol: TCP

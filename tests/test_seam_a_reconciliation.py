@@ -158,6 +158,72 @@ def test_vulnerabilities_are_deduplicated_by_cve_across_images(frontend: Workloa
     connection.close()
 
 
+def test_a_digest_already_scanned_is_never_rescanned(frontend: Workload) -> None:
+    cluster_inventory = FakeClusterInventory([frontend])
+    image_scanner = FakeImageScanner({"sha256:frontend": [_vulnerability("CVE-2024-0001")]})
+    client, connection = _build_client(cluster_inventory, image_scanner)
+
+    with client:
+        client.post("/rescan")
+        client.post("/rescan")
+
+        # Observable rather than assumed, per the spec: the scanner port's
+        # own call record shows the digest was scanned exactly once even
+        # though the loop body ran twice.
+        assert image_scanner.scanned_digests == ["sha256:frontend"]
+    connection.close()
+
+
+def test_a_shared_digest_discovered_by_two_workloads_is_scanned_once(frontend: Workload, backend: Workload) -> None:
+    shared_image = _image("sha256:shared")
+    frontend_sharing = Workload(
+        name=frontend.name,
+        namespace=frontend.namespace,
+        replica_pod_names=frontend.replica_pod_names,
+        images=[shared_image],
+        externally_reachable=frontend.externally_reachable,
+    )
+    backend_sharing = Workload(
+        name=backend.name,
+        namespace=backend.namespace,
+        replica_pod_names=backend.replica_pod_names,
+        images=[shared_image],
+        externally_reachable=backend.externally_reachable,
+    )
+    cluster_inventory = FakeClusterInventory([frontend_sharing, backend_sharing])
+    image_scanner = FakeImageScanner({"sha256:shared": [_vulnerability("CVE-2024-0003")]})
+    client, connection = _build_client(cluster_inventory, image_scanner)
+
+    with client:
+        client.post("/rescan")
+
+        # Both Workloads reference the same, previously-unknown digest in
+        # the same reconcile pass - it must still be scanned only once.
+        assert image_scanner.scanned_digests == ["sha256:shared"]
+    connection.close()
+
+
+def test_a_first_scan_in_progress_is_shown_rather_than_an_empty_queue(frontend: Workload) -> None:
+    cluster_inventory = FakeClusterInventory([frontend])
+    image_scanner = FakeImageScanner()
+    client, connection = _build_client(cluster_inventory, image_scanner)
+
+    # Simulates the moment between the two reconcile phases: the workload
+    # and its image are known, but scanning has not written a result yet
+    # (see aidevops.reconcile.scan_pending_images). Deliberately not using
+    # `with client:` here - that starts the periodic background loop,
+    # which would race this same call for the connection.
+    from aidevops.reconcile import reconcile_workloads
+
+    reconcile_workloads(connection, client.app.state.ports, [frontend])
+
+    response = client.get("/")
+
+    assert "scanning" in response.text.lower()
+    assert "The queue is empty." not in response.text
+    connection.close()
+
+
 def test_the_periodic_loop_runs_the_same_reconciliation(frontend: Workload) -> None:
     cluster_inventory = FakeClusterInventory([frontend])
     image_scanner = FakeImageScanner({"sha256:frontend": [_vulnerability("CVE-2024-0001")]})

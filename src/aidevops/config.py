@@ -15,10 +15,12 @@ from dataclasses import dataclass
 class Settings:
     database_path: str
     inventory_period_seconds: float
+    prometheus_url: str
 
     @classmethod
     def from_env(cls) -> Settings:
         return cls(
             database_path=os.environ.get("DATABASE_PATH") or "aidevops.db",
             inventory_period_seconds=float(os.environ.get("INVENTORY_PERIOD_SECONDS") or 60.0),
+            prometheus_url=os.environ.get("PROMETHEUS_URL") or "http://localhost:9090",
         )

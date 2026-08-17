@@ -23,11 +23,17 @@
             <tr>
                 <td>{{ row.cve_id }}</td>
                 <td>{{ row.severity }}</td>
-                <td>{{ row.affected_workloads | join(", ") }}</td>
+                <td>
+                    {% for workload in row.affected_workloads %}
+                    <a href="/workloads/{{ workload.namespace }}/{{ workload.name }}">{{ workload.name }}</a>{% if not loop.last %}, {% endif %}
+                    {% endfor %}
+                </td>
             </tr>
             {% endfor %}
         </tbody>
     </table>
+    {% elif scanning %}
+    <p id="scanning">First scan in progress. This can take several minutes for a new image - the queue will fill in as scans complete.</p>
     {% else %}
     <p id="empty-queue">The queue is empty.</p>
     {% endif %}

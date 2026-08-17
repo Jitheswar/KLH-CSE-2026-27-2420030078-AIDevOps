@@ -1,0 +1,16 @@
+# NodePort, not ClusterIP: the platform runs on the host until ticket 13,
+# so it reaches Prometheus through the kind node's port mapping in
+# deploy/kind/kind-config.yaml rather than through in-cluster DNS.
+apiVersion: v1
+kind: Service
+metadata:
+  name: prometheus
+  namespace: monitoring
+spec:
+  type: NodePort
+  selector:
+    app: prometheus
+  ports:
+    - port: 9090
+      targetPort: 9090
+      nodePort: 30090

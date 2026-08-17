@@ -1,0 +1,27 @@
+<!doctype html>
+<html lang="en">
+<head>
+    <meta charset="utf-8">
+    <title>{{ namespace }}/{{ name }} - Contextual Priority Platform</title>
+</head>
+<body>
+    <p><a href="/">&larr; Back to queue</a></p>
+    <h1>{{ namespace }}/{{ name }}</h1>
+    {% if telemetry_available %}
+    <section>
+        <h2>CPU</h2>
+        {{ charts.cpu | safe }}
+    </section>
+    <section>
+        <h2>Network transmit</h2>
+        {{ charts.network_transmit | safe }}
+    </section>
+    <section>
+        <h2>Network receive</h2>
+        {{ charts.network_receive | safe }}
+    </section>
+    {% else %}
+    <p id="telemetry-unavailable">Telemetry is temporarily unavailable.</p>
+    {% endif %}
+</body>
+</html>

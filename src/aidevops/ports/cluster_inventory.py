@@ -12,7 +12,9 @@ from aidevops.domain import ContainerImage, Workload
 
 # Namespaces that hold cluster machinery rather than seeded Workloads. A
 # Deployment in one of these is never something an operator wants ranked.
-_SYSTEM_NAMESPACES = frozenset({"kube-system", "kube-node-lease", "kube-public", "ingress-nginx", "local-path-storage"})
+_SYSTEM_NAMESPACES = frozenset(
+    {"kube-system", "kube-node-lease", "kube-public", "ingress-nginx", "local-path-storage", "monitoring"}
+)
 
 # Service types that make a Service reachable from outside the cluster, per
 # the spec's coarse Service-and-Ingress reachability proxy.

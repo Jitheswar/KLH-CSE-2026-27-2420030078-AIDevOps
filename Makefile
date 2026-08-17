@@ -1,4 +1,4 @@
-.PHONY: run test tools cluster-up seed cluster-down scenario-miner-build scenario-miner-start scenario-miner-stop
+.PHONY: run test tools cluster-up seed cluster-down prometheus-up scenario-miner-build scenario-miner-start scenario-miner-stop
 
 export PATH := $(CURDIR)/bin:$(PATH)
 
@@ -49,6 +49,13 @@ seed: tools
 # platform to a working state with no manual cleanup.
 cluster-down: tools
 	kind delete cluster --name $(CLUSTER_NAME)
+
+# Deploys a plain Prometheus into the cluster, scraping the kubelet's
+# cAdvisor endpoint on every node at 15 second resolution. No operator, no
+# Grafana - see ticket 07's port-boundary decision.
+prometheus-up: tools
+	kubectl apply -f deploy/prometheus/
+	kubectl wait --namespace monitoring --for=condition=available --timeout=180s deployment/prometheus
 
 # Builds the miner Scenario's image and loads it into the kind cluster.
 # Not part of the platform - see scenarios/README.md and ADR-0006.
