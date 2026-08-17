@@ -26,4 +26,4 @@ ports = Ports(
     triage_model=FakeTriageModel(),
 )
 
-app = create_app(connection, ports)
+app = create_app(connection, ports, inventory_period_seconds=settings.inventory_period_seconds)

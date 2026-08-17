@@ -22,3 +22,7 @@ class FakeClusterInventory:
 
     def list_workloads(self) -> list[Workload]:
         return list(self._workloads)
+
+    def set_workloads(self, workloads: list[Workload]) -> None:
+        """Test seam: lets Seam A tests script the inventory changing between rescans."""
+        self._workloads = workloads

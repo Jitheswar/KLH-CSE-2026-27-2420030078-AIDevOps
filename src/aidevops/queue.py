@@ -44,4 +44,7 @@ def get_queue_rows(connection: sqlite3.Connection) -> list[QueueRow]:
         elif row["workload_name"] not in existing.affected_workloads:
             existing.affected_workloads.append(row["workload_name"])
 
-    return list(workloads_by_cve.values())
+    rows = list(workloads_by_cve.values())
+    for row in rows:
+        row.affected_workloads.sort()
+    return rows
