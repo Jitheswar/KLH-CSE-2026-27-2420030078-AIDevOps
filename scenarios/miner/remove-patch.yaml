@@ -1,0 +1,9 @@
+# Strategic merge patch: removes the Scenario container added by
+# inject-patch.yaml, by name, via the `$patch: delete` directive.
+# Applied by `make scenario-miner-stop` to return the Workload to normal.
+spec:
+  template:
+    spec:
+      containers:
+        - name: miner-scenario
+          $patch: delete

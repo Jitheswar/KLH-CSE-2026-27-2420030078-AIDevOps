@@ -1,0 +1,14 @@
+# Strategic merge patch: adds the Scenario as a second container on the
+# internet-facing nginx Workload's pod template. Applied by `make
+# scenario-miner-start`; never referenced by anything under src/.
+spec:
+  template:
+    spec:
+      containers:
+        - name: miner-scenario
+          image: aidevops-miner-scenario:latest
+          imagePullPolicy: Never
+          resources:
+            limits:
+              cpu: "500m"
+              memory: "64Mi"

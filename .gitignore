@@ -38,3 +38,7 @@ build/
 
 # kubectl/kind binaries installed locally by scripts/ensure-tools.sh
 /bin/
+
+# Scenario runtime state (e.g. the miner Scenario's start timestamp),
+# only meaningful for whichever cluster is currently running
+/scenarios/*/.state/

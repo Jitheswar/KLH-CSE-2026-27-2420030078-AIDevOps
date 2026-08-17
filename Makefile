@@ -1,17 +1,22 @@
-.PHONY: run test tools cluster-up seed cluster-down
+.PHONY: run test tools cluster-up seed cluster-down scenario-miner-build scenario-miner-start scenario-miner-stop
 
 export PATH := $(CURDIR)/bin:$(PATH)
 
 CLUSTER_NAME := aidevops
+SCENARIO_MINER_IMAGE := aidevops-miner-scenario:latest
+SCENARIO_MINER_DEPLOYMENT := nginx-legacy
+SCENARIO_MINER_NAMESPACE := web
 
-# Starts the platform on the host, reading configuration from .env if present.
-run:
+# Starts the platform on the host, reading configuration from .env if
+# present. Depends on `tools` because the real image scanner shells out to
+# trivy directly.
+run: tools
 	uv run $(if $(wildcard .env),--env-file .env,) uvicorn aidevops.main:app --app-dir src --reload
 
 test:
 	uv run pytest
 
-# Installs kubectl and kind into ./bin if they are absent from the
+# Installs kubectl, kind and trivy into ./bin if they are absent from the
 # development machine.
 tools:
 	./scripts/ensure-tools.sh
@@ -44,3 +49,33 @@ seed: tools
 # platform to a working state with no manual cleanup.
 cluster-down: tools
 	kind delete cluster --name $(CLUSTER_NAME)
+
+# Builds the miner Scenario's image and loads it into the kind cluster.
+# Not part of the platform - see scenarios/README.md and ADR-0006.
+scenario-miner-build: tools
+	docker build -t $(SCENARIO_MINER_IMAGE) scenarios/miner
+	kind load docker-image $(SCENARIO_MINER_IMAGE) --name $(CLUSTER_NAME)
+
+# Injects the miner Scenario into the internet-facing nginx Workload and
+# records the moment it comes up as ground truth for the Seam B tests.
+scenario-miner-start: scenario-miner-build
+	kubectl patch deployment $(SCENARIO_MINER_DEPLOYMENT) \
+		--namespace $(SCENARIO_MINER_NAMESPACE) \
+		--type=strategic \
+		--patch-file=scenarios/miner/inject-patch.yaml
+	kubectl rollout status deployment/$(SCENARIO_MINER_DEPLOYMENT) \
+		--namespace $(SCENARIO_MINER_NAMESPACE) --timeout=120s
+	mkdir -p scenarios/miner/.state
+	date -u +%Y-%m-%dT%H:%M:%SZ > scenarios/miner/.state/started-at
+	echo "Scenario started at $$(cat scenarios/miner/.state/started-at)"
+
+# Removes the miner Scenario and returns the Workload to the shape
+# deploy/seed/01-nginx-legacy.yaml describes.
+scenario-miner-stop: tools
+	kubectl patch deployment $(SCENARIO_MINER_DEPLOYMENT) \
+		--namespace $(SCENARIO_MINER_NAMESPACE) \
+		--type=strategic \
+		--patch-file=scenarios/miner/remove-patch.yaml
+	kubectl rollout status deployment/$(SCENARIO_MINER_DEPLOYMENT) \
+		--namespace $(SCENARIO_MINER_NAMESPACE) --timeout=120s
+	rm -f scenarios/miner/.state/started-at

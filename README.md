@@ -30,6 +30,7 @@ This section will describe the problem being solved, the proposed approach, and 
 - `/results` - Generated outputs, metrics, and experiment results.
 - `/reports` - Written reports and submission documents.
 - `/deploy` - Kubernetes manifests for the local kind cluster: cluster config, ingress-nginx wiring, and the seeded Workloads. See `make cluster-up` and `make seed`.
+- `/scenarios` - Scripted, reproducible compromise simulations used to exercise detection. Deliberately not part of the platform; see `scenarios/README.md` and `docs/adr/0006-attack-simulation-stays-outside-the-platform.md`.
 
 ## Setup and Execution Instructions
 
