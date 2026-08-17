@@ -1,0 +1,37 @@
+# Profile: the control. Current, patched, Alpine-based, almost no CVEs -
+# proof the platform is discriminating rather than flagging everything.
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: patched-control
+  namespace: apps
+  labels:
+    app: patched-control
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: patched-control
+  template:
+    metadata:
+      labels:
+        app: patched-control
+    spec:
+      containers:
+        - name: nginx
+          image: nginx:1.27-alpine
+          ports:
+            - containerPort: 80
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: patched-control
+  namespace: apps
+spec:
+  type: ClusterIP
+  selector:
+    app: patched-control
+  ports:
+    - port: 80
+      targetPort: 80

@@ -26,7 +26,7 @@ from aidevops.ports.telemetry import TelemetryPort
 from aidevops.ports.threat_intel import ThreatIntelPort
 from aidevops.ports.triage_model import TriageModelPort
 from aidevops.queue import get_queue_rows
-from aidevops.reconcile import reconcile
+from aidevops.reconcile import reconcile_workloads
 
 TEMPLATES_DIR = Path(__file__).parent / "templates"
 DEFAULT_INVENTORY_PERIOD_SECONDS = 60.0
@@ -50,8 +50,13 @@ async def _inventory_loop(
 
 
 def _locked_reconcile(connection: sqlite3.Connection, ports: Ports, db_lock: threading.Lock) -> None:
+    # Fetching the inventory is a real network call to the Kubernetes API,
+    # not just a SQLite write, so it happens before the lock is taken - the
+    # lock's job is to serialize access to `connection`, not to hold up the
+    # queue page for however long the cluster takes to answer.
+    workloads = ports.cluster_inventory.list_workloads()
     with db_lock:
-        reconcile(connection, ports)
+        reconcile_workloads(connection, ports, workloads)
 
 
 def create_app(

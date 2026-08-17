@@ -1,0 +1,42 @@
+# Profile: old, internal database.
+# postgres:9.6 is long past EOL. The password below is a throwaway for a
+# local kind seed only, never used outside this disposable cluster, and is
+# not the kind of credential CONTRIBUTING.md's submission norms are about.
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: legacy-postgres
+  namespace: data
+  labels:
+    app: legacy-postgres
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: legacy-postgres
+  template:
+    metadata:
+      labels:
+        app: legacy-postgres
+    spec:
+      containers:
+        - name: postgres
+          image: postgres:9.6
+          env:
+            - name: POSTGRES_PASSWORD
+              value: seed-only-not-a-secret
+          ports:
+            - containerPort: 5432
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: legacy-postgres
+  namespace: data
+spec:
+  type: ClusterIP
+  selector:
+    app: legacy-postgres
+  ports:
+    - port: 5432
+      targetPort: 5432

@@ -29,6 +29,7 @@ This section will describe the problem being solved, the proposed approach, and 
 - `/data` - Datasets used by the project, or a reference to where the data is hosted if it is not stored in this repository. See `data/README.md`.
 - `/results` - Generated outputs, metrics, and experiment results.
 - `/reports` - Written reports and submission documents.
+- `/deploy` - Kubernetes manifests for the local kind cluster: cluster config, ingress-nginx wiring, and the seeded Workloads. See `make cluster-up` and `make seed`.
 
 ## Setup and Execution Instructions
 

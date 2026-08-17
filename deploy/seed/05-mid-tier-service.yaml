@@ -1,0 +1,37 @@
+# Profile: mid-tier internal service - not ancient, not current, a middling
+# CVE count to give the ranked queue a genuine middle rather than two poles.
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: mid-tier-service
+  namespace: apps
+  labels:
+    app: mid-tier-service
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: mid-tier-service
+  template:
+    metadata:
+      labels:
+        app: mid-tier-service
+    spec:
+      containers:
+        - name: redis
+          image: redis:6.2
+          ports:
+            - containerPort: 6379
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: mid-tier-service
+  namespace: apps
+spec:
+  type: ClusterIP
+  selector:
+    app: mid-tier-service
+  ports:
+    - port: 6379
+      targetPort: 6379

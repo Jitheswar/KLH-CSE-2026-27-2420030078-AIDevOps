@@ -1,6 +1,7 @@
 # Secrets and credentials
 .env
 .env.*
+!.env.example
 *.pem
 *.key
 *.p12
@@ -31,3 +32,9 @@ npm-debug.log*
 dist/
 build/
 *.log
+
+# Agent scratch space (local issue tracker)
+.scratch/
+
+# kubectl/kind binaries installed locally by scripts/ensure-tools.sh
+/bin/

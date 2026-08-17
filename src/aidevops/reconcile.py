@@ -20,6 +20,15 @@ if TYPE_CHECKING:
 
 def reconcile(connection: sqlite3.Connection, ports: "Ports") -> None:
     workloads = ports.cluster_inventory.list_workloads()
+    reconcile_workloads(connection, ports, workloads)
+
+
+def reconcile_workloads(connection: sqlite3.Connection, ports: "Ports", workloads: list["Workload"]) -> None:
+    """The DB-writing half of `reconcile`, split out so callers holding a
+    lock around SQLite access (see aidevops.app) can fetch `workloads` from
+    the cluster inventory port - a real network call once it talks to
+    Kubernetes - before acquiring that lock rather than while holding it.
+    """
     seen_keys = {(workload.namespace, workload.name) for workload in workloads}
 
     existing = connection.execute("SELECT id, namespace, name FROM workloads").fetchall()

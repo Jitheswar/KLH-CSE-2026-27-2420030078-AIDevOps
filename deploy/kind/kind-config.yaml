@@ -1,0 +1,23 @@
+# kind cluster used for local development.
+#
+# The control-plane node is labelled ingress-ready=true and its 80/443 are
+# mapped out to the host, which is what the stock ingress-nginx "kind"
+# provider manifest (applied by `make cluster-up`) expects to bind to.
+kind: Cluster
+apiVersion: kind.x-k8s.io/v1alpha4
+name: aidevops
+nodes:
+  - role: control-plane
+    kubeadmConfigPatches:
+      - |
+        kind: InitConfiguration
+        nodeRegistration:
+          kubeletExtraArgs:
+            node-labels: "ingress-ready=true"
+    extraPortMappings:
+      - containerPort: 80
+        hostPort: 8080
+        protocol: TCP
+      - containerPort: 443
+        hostPort: 8443
+        protocol: TCP
