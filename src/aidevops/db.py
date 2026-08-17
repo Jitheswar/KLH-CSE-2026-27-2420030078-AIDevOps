@@ -47,6 +47,16 @@ CREATE TABLE IF NOT EXISTS vulnerabilities (
     description TEXT,
     PRIMARY KEY (cve_id, image_digest, package)
 );
+
+-- One row per CVE that survived the pre-filter (see aidevops.candidates).
+-- base_priority is the deterministic score computed from Severity, EPSS,
+-- KEV membership and fix availability - stored on its own, independently of
+-- any later model adjustment (a later ticket), per ADR-0004 and the spec's
+-- requirement that the toggle be a re-render rather than a recomputation.
+CREATE TABLE IF NOT EXISTS candidate_priorities (
+    cve_id TEXT PRIMARY KEY,
+    base_priority INTEGER NOT NULL
+);
 """
 
 

@@ -21,6 +21,7 @@ from fastapi import FastAPI, HTTPException, Request
 from fastapi.responses import HTMLResponse, RedirectResponse
 from fastapi.templating import Jinja2Templates
 
+from aidevops.candidates import fetch_vulnerability_rows, score_candidate_set, store_candidate_set
 from aidevops.charts import render_line_chart
 from aidevops.ports.cluster_inventory import ClusterInventoryPort
 from aidevops.ports.image_scanner import ImageScannerPort
@@ -29,7 +30,7 @@ from aidevops.ports.threat_intel import ThreatIntelPort
 from aidevops.ports.triage_model import TriageModelPort
 from aidevops.queue import get_queue_rows, has_pending_scans
 from aidevops.reconcile import reconcile_workloads, scan_pending_images, store_scan_result
-from aidevops.workload_detail import get_workload_pods, get_workload_telemetry
+from aidevops.workload_detail import get_workload_pods, get_workload_telemetry_and_baseline, scaled_band
 
 TEMPLATES_DIR = Path(__file__).parent / "templates"
 DEFAULT_INVENTORY_PERIOD_SECONDS = 60.0
@@ -72,6 +73,17 @@ def _locked_reconcile(connection: sqlite3.Connection, ports: Ports, db_lock: thr
             store_scan_result(connection, digest, vulnerabilities)
 
     scan_pending_images(connection, ports, pending, store=_locked_store)
+
+    # Threat intel lookups are in-memory dict reads against the snapshot
+    # loaded at startup, not a network call, but scoring and sorting a
+    # thousand-plus Vulnerabilities is still real CPU work - it runs with
+    # no lock held, same reasoning as the network calls above. Only the
+    # SQL read and the SQL write around it need db_lock.
+    with db_lock:
+        rows = fetch_vulnerability_rows(connection)
+    candidates = score_candidate_set(rows, ports.threat_intel)
+    with db_lock:
+        store_candidate_set(connection, candidates)
 
 
 def create_app(
@@ -124,15 +136,23 @@ def create_app(
         if pod_names is None:
             raise HTTPException(status_code=404, detail="Workload not found")
 
-        # A real Prometheus query is a network call, same reasoning as the
-        # cluster inventory call above - it happens with no lock held.
-        telemetry = get_workload_telemetry(ports.telemetry, pod_names, end=datetime.now())
+        # Real Prometheus queries are network calls, same reasoning as the
+        # cluster inventory call above - they happen with no lock held. One
+        # fetch serves both the chart and the Baseline - see
+        # get_workload_telemetry_and_baseline.
+        now = datetime.now()
+        telemetry, baseline = get_workload_telemetry_and_baseline(ports.telemetry, pod_names, end=now)
+
         charts = None
         if telemetry.available:
+            replica_count = len(pod_names)
             charts = {
-                "cpu": render_line_chart(telemetry.samples, "cpu"),
-                "network_transmit": render_line_chart(telemetry.samples, "network_transmit"),
-                "network_receive": render_line_chart(telemetry.samples, "network_receive"),
+                metric: render_line_chart(
+                    telemetry.samples,
+                    metric,
+                    band=scaled_band(baseline, metric, replica_count) if baseline is not None else None,
+                )
+                for metric in ("cpu", "network_transmit", "network_receive")
             }
 
         return templates.TemplateResponse(
@@ -143,6 +163,7 @@ def create_app(
                 "name": name,
                 "telemetry_available": telemetry.available,
                 "charts": charts,
+                "baseline_establishing": baseline is not None and not baseline.established,
             },
         )
 

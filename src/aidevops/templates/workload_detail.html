@@ -8,6 +8,9 @@
     <p><a href="/">&larr; Back to queue</a></p>
     <h1>{{ namespace }}/{{ name }}</h1>
     {% if telemetry_available %}
+    {% if baseline_establishing %}
+    <p id="baseline-establishing">Still establishing a Baseline for this Workload.</p>
+    {% endif %}
     <section>
         <h2>CPU</h2>
         {{ charts.cpu | safe }}

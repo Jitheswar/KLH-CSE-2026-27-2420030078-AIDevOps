@@ -12,10 +12,9 @@ from concurrent.futures import ThreadPoolExecutor
 from dataclasses import dataclass, field
 from datetime import datetime, timedelta
 
+from aidevops.baseline import TRAINING_LOOKBACK, Baseline, BaselineBand, train_workload_baseline
 from aidevops.domain import TelemetrySample
 from aidevops.ports.telemetry import TelemetryPort, TelemetryUnavailable
-
-DEFAULT_WINDOW = timedelta(minutes=15)
 
 
 @dataclass(frozen=True)
@@ -39,30 +38,50 @@ def get_workload_pods(connection: sqlite3.Connection, namespace: str, name: str)
     return [row["pod_name"] for row in pods]
 
 
-def get_workload_telemetry(
+def get_workload_telemetry_and_baseline(
     telemetry: TelemetryPort,
     pod_names: list[str],
     end: datetime,
-    window: timedelta = DEFAULT_WINDOW,
-) -> WorkloadTelemetry:
-    """Fetches every replica pod's series for the window and sums them into
-    one Workload-level series. A Prometheus outage degrades this to an
-    unavailable result rather than raising - see aidevops.app.
+    lookback: timedelta = TRAINING_LOOKBACK,
+) -> tuple[WorkloadTelemetry, Baseline | None]:
+    """Fetches every replica pod's series once, over the Baseline's rolling
+    training lookback, and derives both the chart's telemetry and the
+    Workload's Baseline from that single fetch - there is no reason to
+    query Prometheus for the same pods twice per page view. The chart shows
+    the same window the Baseline was trained on, so the band drawn behind
+    it is directly comparable to what is plotted.
+
+    A Prometheus outage degrades both to unavailable, rather than raising -
+    see aidevops.app.
     """
     if not pod_names:
-        return WorkloadTelemetry(available=True, samples=[])
+        return WorkloadTelemetry(available=True, samples=[]), train_workload_baseline({})
 
-    start = end - window
+    start = end - lookback
     try:
-        # One query per replica pod - run them concurrently so a Workload
-        # with several replicas doesn't pay for each pod's Prometheus round
-        # trip one after another.
         with ThreadPoolExecutor(max_workers=len(pod_names)) as executor:
-            series = list(executor.map(lambda pod_name: telemetry.query(pod_name, start, end), pod_names))
+            series_by_pod = dict(
+                zip(pod_names, executor.map(lambda pod_name: telemetry.query(pod_name, start, end), pod_names), strict=True)
+            )
     except TelemetryUnavailable:
-        return WorkloadTelemetry(available=False)
+        return WorkloadTelemetry(available=False), None
 
-    return WorkloadTelemetry(available=True, samples=_sum_pod_series(series))
+    telemetry_result = WorkloadTelemetry(available=True, samples=_sum_pod_series(series_by_pod.values()))
+    baseline = train_workload_baseline({pod_name: series.samples for pod_name, series in series_by_pod.items()})
+    return telemetry_result, baseline
+
+
+def scaled_band(baseline: Baseline, metric: str, replica_count: int) -> BaselineBand | None:
+    """Scales a Baseline's per-replica band up to the number of replicas
+    being summed on the chart. The band is trained on pooled per-replica
+    windows (ADR-0002), while the chart shows replicas summed together, so a
+    scaled-out Workload's normal *total* is approximately its per-replica
+    band times its replica count.
+    """
+    band = baseline.band(metric)
+    if band is None or replica_count <= 0:
+        return None
+    return BaselineBand(low=band.low * replica_count, high=band.high * replica_count)
 
 
 def _sum_pod_series(series: list) -> list[TelemetrySample]:

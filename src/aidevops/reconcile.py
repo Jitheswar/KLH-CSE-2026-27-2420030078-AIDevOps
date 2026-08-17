@@ -25,6 +25,8 @@ import logging
 import sqlite3
 from typing import TYPE_CHECKING, Callable
 
+from aidevops.candidates import fetch_vulnerability_rows, score_candidate_set, store_candidate_set
+
 if TYPE_CHECKING:
     from aidevops.app import Ports
     from aidevops.domain import ContainerImage, Vulnerability, Workload
@@ -33,9 +35,22 @@ logger = logging.getLogger(__name__)
 
 
 def reconcile(connection: sqlite3.Connection, ports: "Ports") -> None:
+    """Composes every reconcile step for a caller with no lock to worry
+    about. `aidevops.app` does not call this directly - it has its own
+    locked composition of the same steps, for the reasons the module
+    docstring above gives - so this is the reference shape that
+    composition follows, not a second, drifting code path in its own
+    right.
+    """
     workloads = ports.cluster_inventory.list_workloads()
     pending = reconcile_workloads(connection, ports, workloads)
     scan_pending_images(connection, ports, pending)
+    # Re-run on every pass, not only when a scan wrote something new - the
+    # threat intel snapshot itself does not change mid-process, but this
+    # is the loop body the periodic loop and the manual rescan share.
+    rows = fetch_vulnerability_rows(connection)
+    candidates = score_candidate_set(rows, ports.threat_intel)
+    store_candidate_set(connection, candidates)
 
 
 def reconcile_workloads(

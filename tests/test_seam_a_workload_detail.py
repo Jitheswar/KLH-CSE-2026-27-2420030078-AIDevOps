@@ -7,6 +7,7 @@ spec's testing decisions.
 
 from __future__ import annotations
 
+import random
 from datetime import datetime, timedelta
 
 import pytest
@@ -74,6 +75,27 @@ def _synthetic_series() -> TelemetrySeries:
     )
 
 
+def _established_series() -> TelemetrySeries:
+    """Enough windows of steady telemetry - well past
+    baseline.MIN_WINDOWS_FOR_FOREST - that the Workload's Baseline is
+    established rather than still cold-starting.
+    """
+    rng = random.Random(0)
+    now = datetime(2024, 1, 1, 12, 0, 0)
+    return TelemetrySeries(
+        pod_name="frontend-abc",
+        samples=[
+            TelemetrySample(
+                timestamp=now - timedelta(seconds=30 * i),
+                cpu=5.0 + rng.uniform(-0.2, 0.2),
+                network_transmit=50.0 + rng.uniform(-2.0, 2.0),
+                network_receive=25.0 + rng.uniform(-1.0, 1.0),
+            )
+            for i in range(200, 0, -1)
+        ],
+    )
+
+
 def test_workload_detail_reachable_from_a_queue_row(frontend: Workload) -> None:
     telemetry = FakeTelemetry({"frontend-abc": _synthetic_series()})
     client, _ = _client_with_telemetry(frontend, telemetry)
@@ -110,3 +132,26 @@ def test_workload_detail_degrades_when_telemetry_is_unavailable(frontend: Worklo
     queue_response = client.get("/")
     assert queue_response.status_code == 200
     assert "CVE-2024-0001" in queue_response.text
+
+
+def test_a_workload_with_little_history_reports_still_establishing(frontend: Workload) -> None:
+    telemetry = FakeTelemetry({"frontend-abc": _synthetic_series()})
+    client, _ = _client_with_telemetry(frontend, telemetry)
+
+    detail_response = client.get("/workloads/default/frontend")
+
+    assert detail_response.status_code == 200
+    assert "baseline-establishing" in detail_response.text
+    assert "Still establishing a Baseline" in detail_response.text
+
+
+def test_an_established_baseline_is_distinguishable_from_nothing_wrong(frontend: Workload) -> None:
+    telemetry = FakeTelemetry({"frontend-abc": _established_series()})
+    client, _ = _client_with_telemetry(frontend, telemetry)
+
+    detail_response = client.get("/workloads/default/frontend")
+
+    assert detail_response.status_code == 200
+    assert "baseline-establishing" not in detail_response.text
+    # The Baseline band draws behind the telemetry chart once established.
+    assert "baseline-band" in detail_response.text
