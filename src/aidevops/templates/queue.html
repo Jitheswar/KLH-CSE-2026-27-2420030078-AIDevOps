@@ -1,0 +1,32 @@
+<!doctype html>
+<html lang="en">
+<head>
+    <meta charset="utf-8">
+    <title>Contextual Priority Platform</title>
+</head>
+<body>
+    <h1>Queue</h1>
+    {% if rows %}
+    <table>
+        <thead>
+            <tr>
+                <th>CVE</th>
+                <th>Severity</th>
+                <th>Affected Workloads</th>
+            </tr>
+        </thead>
+        <tbody>
+            {% for row in rows %}
+            <tr>
+                <td>{{ row.cve_id }}</td>
+                <td>{{ row.severity }}</td>
+                <td>{{ row.affected_workloads | join(", ") }}</td>
+            </tr>
+            {% endfor %}
+        </tbody>
+    </table>
+    {% else %}
+    <p id="empty-queue">The queue is empty.</p>
+    {% endif %}
+</body>
+</html>
