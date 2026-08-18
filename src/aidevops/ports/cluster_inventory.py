@@ -11,9 +11,20 @@ from typing import Any, Protocol
 from aidevops.domain import ContainerImage, Workload
 
 # Namespaces that hold cluster machinery rather than seeded Workloads. A
-# Deployment in one of these is never something an operator wants ranked.
+# Deployment in one of these is never something an operator wants ranked -
+# including "aidevops" itself once it runs in-cluster (see
+# deploy/platform/00-namespace.yaml and ticket 13): the platform is not a
+# Workload it should be scanning and Triaging against itself.
 _SYSTEM_NAMESPACES = frozenset(
-    {"kube-system", "kube-node-lease", "kube-public", "ingress-nginx", "local-path-storage", "monitoring"}
+    {
+        "kube-system",
+        "kube-node-lease",
+        "kube-public",
+        "ingress-nginx",
+        "local-path-storage",
+        "monitoring",
+        "aidevops",
+    }
 )
 
 # Service types that make a Service reachable from outside the cluster, per
@@ -65,15 +76,17 @@ def _selector_matches(selector: dict[str, str], labels: dict[str, str]) -> bool:
 class RealClusterInventory:
     """Polls the Kubernetes API for Deployments, their pods, and their reachability.
 
-    Loads its client config the way `kubectl` does: `KUBECONFIG` if set,
-    otherwise `~/.kube/config`, which is exactly what `kind create cluster`
-    writes and points at.
+    Loads its client config the way `kubectl` does on the host - `KUBECONFIG`
+    if set, otherwise `~/.kube/config`, which is exactly what `kind create
+    cluster` writes and points at - and falls back to the in-cluster
+    ServiceAccount config (see deploy/platform/) when neither is present,
+    which is the case running as a Pod. See ticket 13.
     """
 
     def __init__(self) -> None:
         from kubernetes import client, config
 
-        config.load_kube_config()
+        config.load_config()
         self._apps = client.AppsV1Api()
         self._core = client.CoreV1Api()
         self._networking = client.NetworkingV1Api()

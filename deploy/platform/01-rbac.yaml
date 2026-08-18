@@ -1,0 +1,40 @@
+# Least-privilege enough to build the queue: read-only, cluster-wide list
+# access to exactly the four resource kinds
+# aidevops.ports.cluster_inventory.RealClusterInventory reads, and nothing
+# else - no get on a single object, no watch, no write of any kind, no
+# access to Secrets or Pod exec. Cluster-wide (a ClusterRole, not a
+# Role) because list_workloads() lists every namespace in one call rather
+# than one call per namespace - see RealClusterInventory.list_workloads.
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: aidevops
+  namespace: aidevops
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRole
+metadata:
+  name: aidevops-platform
+rules:
+  - apiGroups: ["apps"]
+    resources: ["deployments"]
+    verbs: ["list"]
+  - apiGroups: [""]
+    resources: ["pods", "services"]
+    verbs: ["list"]
+  - apiGroups: ["networking.k8s.io"]
+    resources: ["ingresses"]
+    verbs: ["list"]
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRoleBinding
+metadata:
+  name: aidevops-platform
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: ClusterRole
+  name: aidevops-platform
+subjects:
+  - kind: ServiceAccount
+    name: aidevops
+    namespace: aidevops

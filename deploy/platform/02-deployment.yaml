@@ -1,0 +1,60 @@
+# Runs the same aidevops.main:app the host does (see the Makefile's `run`
+# target and aidevops/main.py) inside the cluster it watches, under the
+# least-privilege ServiceAccount in 01-rbac.yaml.
+#
+# `aidevops-secrets` is not a file in this directory - `make platform-deploy`
+# creates it from the developer's local .env, so no credential ever lands in
+# a manifest that gets committed. The cluster-specific values below
+# (PROMETHEUS_URL, DATABASE_PATH) are listed explicitly in `env`, which
+# Kubernetes resolves after `envFrom`, so they always win over whatever a
+# host-oriented .env happens to hold for them.
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: aidevops
+  namespace: aidevops
+  labels:
+    app: aidevops
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: aidevops
+  template:
+    metadata:
+      labels:
+        app: aidevops
+    spec:
+      serviceAccountName: aidevops
+      securityContext:
+        runAsNonRoot: true
+        fsGroup: 10001
+      containers:
+        - name: aidevops
+          image: aidevops-platform:latest
+          # Loaded straight into kind's node cache by `make platform-build`
+          # - never pulled from a registry.
+          imagePullPolicy: Never
+          envFrom:
+            - secretRef:
+                name: aidevops-secrets
+          env:
+            # In-cluster DNS name for the Service in
+            # deploy/prometheus/04-service.yaml, replacing the NodePort the
+            # host-run platform uses to reach the same Prometheus.
+            - name: PROMETHEUS_URL
+              value: http://prometheus.monitoring.svc.cluster.local:9090
+            - name: DATABASE_PATH
+              value: /data/aidevops.db
+          ports:
+            - containerPort: 8000
+          volumeMounts:
+            - name: data
+              mountPath: /data
+          securityContext:
+            allowPrivilegeEscalation: false
+            capabilities:
+              drop: ["ALL"]
+      volumes:
+        - name: data
+          emptyDir: {}

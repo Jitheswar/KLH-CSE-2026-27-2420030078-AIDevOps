@@ -1,4 +1,4 @@
-.PHONY: run test test-live tools cluster-up seed cluster-down prometheus-up scenario-miner-build scenario-miner-start scenario-miner-stop
+.PHONY: run test test-live tools cluster-up seed cluster-down prometheus-up scenario-miner-build scenario-miner-start scenario-miner-stop platform-build platform-deploy platform-down
 
 export PATH := $(CURDIR)/bin:$(PATH)
 
@@ -6,6 +6,8 @@ CLUSTER_NAME := aidevops
 SCENARIO_MINER_IMAGE := aidevops-miner-scenario:latest
 SCENARIO_MINER_DEPLOYMENT := nginx-legacy
 SCENARIO_MINER_NAMESPACE := web
+PLATFORM_IMAGE := aidevops-platform:latest
+PLATFORM_NAMESPACE := aidevops
 
 # Starts the platform on the host, reading configuration from .env if
 # present. Depends on `tools` because the real image scanner shells out to
@@ -114,3 +116,34 @@ scenario-miner-stop: tools
 	kubectl rollout status deployment/$(SCENARIO_MINER_DEPLOYMENT) \
 		--namespace $(SCENARIO_MINER_NAMESPACE) --timeout=120s
 	rm -f scenarios/miner/.state/started-at
+
+# Builds the platform's own image and loads it into the kind cluster - same
+# two-step shape as scenario-miner-build above, and the same reason:
+# `imagePullPolicy: Never` in deploy/platform/02-deployment.yaml means the
+# image has to already be sitting in the node's local cache, not pulled
+# from a registry that does not exist for it.
+platform-build: tools
+	docker build -t $(PLATFORM_IMAGE) .
+	kind load docker-image $(PLATFORM_IMAGE) --name $(CLUSTER_NAME)
+
+# Deploys the platform into the cluster it watches - see ticket 13 and
+# deploy/platform/. The Secret is built here, from the developer's own
+# local .env, and only ever handed to the API server directly - it is
+# never written to a file, so it can never end up in a manifest that lands
+# in git. `--dry-run=client -o yaml | kubectl apply -f -` makes this
+# idempotent, the same as every `kubectl apply` elsewhere in this file:
+# re-running it against an already-deployed platform updates the Secret in
+# place instead of failing on "already exists".
+platform-deploy: platform-build
+	@test -f .env || { echo "Missing .env - copy .env.example to .env and fill in DEEPSEEK_API_KEY first"; exit 1; }
+	kubectl apply -f deploy/platform/00-namespace.yaml
+	kubectl create secret generic aidevops-secrets --namespace $(PLATFORM_NAMESPACE) \
+		--from-env-file=.env --dry-run=client -o yaml | kubectl apply -f -
+	kubectl apply -f deploy/platform/
+	kubectl wait --namespace $(PLATFORM_NAMESPACE) --for=condition=available --timeout=180s deployment/aidevops
+
+# Removes everything platform-deploy created, including the Secret - all of
+# it lives inside the aidevops namespace deploy/platform/00-namespace.yaml
+# defines, so deleting that one manifest cascades to the rest.
+platform-down: tools
+	kubectl delete -f deploy/platform/ --ignore-not-found

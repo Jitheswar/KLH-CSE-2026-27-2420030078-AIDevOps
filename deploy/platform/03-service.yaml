@@ -1,0 +1,15 @@
+# ClusterIP only: reaching the queue page in-cluster is a `kubectl
+# port-forward`, the same way any other internal-only Service in this
+# cluster would be reached - nothing about the UI needs to be exposed
+# outside it.
+apiVersion: v1
+kind: Service
+metadata:
+  name: aidevops
+  namespace: aidevops
+spec:
+  selector:
+    app: aidevops
+  ports:
+    - port: 8000
+      targetPort: 8000
