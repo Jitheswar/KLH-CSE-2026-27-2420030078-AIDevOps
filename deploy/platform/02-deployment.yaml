@@ -28,6 +28,11 @@ spec:
       serviceAccountName: aidevops
       securityContext:
         runAsNonRoot: true
+        # Matches the Dockerfile's `useradd --uid 10001 aidevops`. Kubernetes
+        # cannot verify a non-numeric image USER is non-root on its own, so
+        # runAsNonRoot without this fails every container with
+        # CreateContainerConfigError.
+        runAsUser: 10001
         fsGroup: 10001
       containers:
         - name: aidevops
