@@ -11,17 +11,15 @@ call is a network request and must not happen while the caller's db_lock
 
 from __future__ import annotations
 
+import dataclasses
 import logging
 import sqlite3
+from concurrent.futures import ThreadPoolExecutor
 from dataclasses import dataclass
-from typing import TYPE_CHECKING
 
 from aidevops.domain import ExposureSignalState, TriageContext, Vulnerability
 from aidevops.ports.threat_intel import ThreatIntelPort
 from aidevops.ports.triage_model import TriageModelPort, TriageUnavailable, clamp_adjustment
-
-if TYPE_CHECKING:
-    from aidevops.app import Ports
 
 logger = logging.getLogger(__name__)
 
@@ -49,9 +47,16 @@ class _TriageOutcome:
 
 def fetch_pending_triage_candidates(connection: sqlite3.Connection) -> list[_TriageCandidate]:
     """Every Candidate Set member that has no cached, successful Triage at
-    its current Exposure Signal key. A `failed` cache row does not count as
-    cached here, so a transient model outage is retried on the next
-    reconcile rather than stuck forever - see aidevops.db's schema comment.
+    its current Exposure Signal key, claiming each one it returns.
+
+    The claim (`triage_results.claimed`, mirroring `images.scanning` - see
+    aidevops.reconcile and aidevops.db) is what stops two reconcile passes
+    racing each other - e.g. the periodic loop's immediate first tick
+    overlapping a manual rescan - from both deciding the same CVE is
+    pending and both paying for a DeepSeek call for it. A `failed` cache
+    row does not count as cached, and neither does a stale claim count as
+    blocking once its outcome is stored, so a transient model outage is
+    retried on the next reconcile rather than stuck forever.
 
     One representative image is chosen per CVE - the lexicographically
     smallest digest among the images it appears in - so a CVE occurring in
@@ -82,10 +87,14 @@ def fetch_pending_triage_candidates(connection: sqlite3.Connection) -> list[_Tri
         """
     ).fetchall()
 
-    cached = {
+    # Blocked, not just "cached": a row counts here whether it already
+    # succeeded (failed = 0) or another in-flight pass currently claims it
+    # (claimed = 1) - only a stale, unclaimed failure is still eligible.
+    blocked = {
         (row["cve_id"], row["image_digest"])
         for row in connection.execute(
-            "SELECT cve_id, image_digest FROM triage_results WHERE exposure_signal_state = ? AND failed = 0",
+            "SELECT cve_id, image_digest FROM triage_results "
+            "WHERE exposure_signal_state = ? AND (failed = 0 OR claimed = 1)",
             (_NO_SIGNAL.cache_key(),),
         ).fetchall()
     }
@@ -96,7 +105,7 @@ def fetch_pending_triage_candidates(connection: sqlite3.Connection) -> list[_Tri
         if row["cve_id"] in seen_cves:
             continue
         seen_cves.add(row["cve_id"])
-        if (row["cve_id"], row["image_digest"]) in cached:
+        if (row["cve_id"], row["image_digest"]) in blocked:
             continue
 
         vulnerability = Vulnerability(
@@ -119,7 +128,26 @@ def fetch_pending_triage_candidates(connection: sqlite3.Connection) -> list[_Tri
             exposure_signal=_NO_SIGNAL,
         )
         candidates.append(_TriageCandidate(context=context, image_digest=row["image_digest"]))
+
+    _claim(connection, candidates)
     return candidates
+
+
+def _claim(connection: sqlite3.Connection, candidates: list["_TriageCandidate"]) -> None:
+    for candidate in candidates:
+        connection.execute(
+            """
+            INSERT INTO triage_results (cve_id, image_digest, exposure_signal_state, adjustment, rationale, failed, claimed)
+            VALUES (?, ?, ?, 0, '', 0, 1)
+            ON CONFLICT (cve_id, image_digest, exposure_signal_state) DO UPDATE SET claimed = 1
+            """,
+            (
+                candidate.context.vulnerability.cve_id,
+                candidate.image_digest,
+                candidate.context.exposure_signal.cache_key(),
+            ),
+        )
+    connection.commit()
 
 
 def enrich_with_threat_intel(
@@ -133,18 +161,17 @@ def enrich_with_threat_intel(
     enriched: list[_TriageCandidate] = []
     for candidate in candidates:
         intel = threat_intel.lookup(candidate.context.vulnerability.cve_id)
-        context = TriageContext(
-            vulnerability=candidate.context.vulnerability,
-            epss_score=intel.epss_score,
-            kev_listed=intel.kev_listed,
-            image_repository=candidate.context.image_repository,
-            workload_name=candidate.context.workload_name,
-            workload_namespace=candidate.context.workload_namespace,
-            externally_reachable=candidate.context.externally_reachable,
-            exposure_signal=candidate.context.exposure_signal,
-        )
+        context = dataclasses.replace(candidate.context, epss_score=intel.epss_score, kev_listed=intel.kev_listed)
         enriched.append(_TriageCandidate(context=context, image_digest=candidate.image_digest))
     return enriched
+
+
+# One model call per Vulnerability is the spec's requirement - see the
+# module docstring - not one call for the whole Candidate Set at once.
+# Running that many calls concurrently, bounded, is what keeps a reconcile
+# pass from taking Candidate-Set-size times a single DeepSeek round trip;
+# see aidevops.ports.telemetry.PrometheusTelemetry for the same pattern.
+_MAX_CONCURRENT_TRIAGE_CALLS = 8
 
 
 def run_triage_model(triage_model: TriageModelPort, candidates: list[_TriageCandidate]) -> list[_TriageOutcome]:
@@ -152,47 +179,50 @@ def run_triage_model(triage_model: TriageModelPort, candidates: list[_TriageCand
     holding a lock around SQLite access (see aidevops.app) run this with
     no lock held, same reasoning as aidevops.reconcile.scan_pending_images.
     """
-    outcomes: list[_TriageOutcome] = []
-    for candidate in candidates:
-        cve_id = candidate.context.vulnerability.cve_id
-        try:
-            result = triage_model.triage(candidate.context)
-            outcomes.append(
-                _TriageOutcome(
-                    cve_id=cve_id,
-                    image_digest=candidate.image_digest,
-                    exposure_signal_state=candidate.context.exposure_signal.cache_key(),
-                    adjustment=clamp_adjustment(result.adjustment),
-                    rationale=result.rationale,
-                    failed=False,
-                )
-            )
-        except TriageUnavailable:
-            # Per the spec: a failed or unavailable model call leaves the
-            # base score standing and marks the row as such, so a fallback
-            # ranking is never read as a considered one.
-            logger.exception("triage failed for %s, base score stands", cve_id)
-            outcomes.append(
-                _TriageOutcome(
-                    cve_id=cve_id,
-                    image_digest=candidate.image_digest,
-                    exposure_signal_state=candidate.context.exposure_signal.cache_key(),
-                    adjustment=0,
-                    rationale="Triage unavailable - showing the base score.",
-                    failed=True,
-                )
-            )
-    return outcomes
+    if not candidates:
+        return []
+    with ThreadPoolExecutor(max_workers=min(len(candidates), _MAX_CONCURRENT_TRIAGE_CALLS)) as executor:
+        return list(executor.map(_triage_one, candidates, [triage_model] * len(candidates)))
+
+
+def _triage_one(candidate: _TriageCandidate, triage_model: TriageModelPort) -> _TriageOutcome:
+    cve_id = candidate.context.vulnerability.cve_id
+    try:
+        result = triage_model.triage(candidate.context)
+        return _TriageOutcome(
+            cve_id=cve_id,
+            image_digest=candidate.image_digest,
+            exposure_signal_state=candidate.context.exposure_signal.cache_key(),
+            adjustment=clamp_adjustment(result.adjustment),
+            rationale=result.rationale,
+            failed=False,
+        )
+    except TriageUnavailable:
+        # Per the spec: a failed or unavailable model call leaves the
+        # base score standing and marks the row as such, so a fallback
+        # ranking is never read as a considered one.
+        logger.exception("triage failed for %s, base score stands", cve_id)
+        return _TriageOutcome(
+            cve_id=cve_id,
+            image_digest=candidate.image_digest,
+            exposure_signal_state=candidate.context.exposure_signal.cache_key(),
+            adjustment=0,
+            rationale="Triage unavailable - showing the base score.",
+            failed=True,
+        )
 
 
 def store_triage_outcomes(connection: sqlite3.Connection, outcomes: list[_TriageOutcome]) -> None:
+    """Stores each outcome and releases its claim (see `_claim`) - success
+    or failure, the candidate is no longer in flight once this returns.
+    """
     for outcome in outcomes:
         connection.execute(
             """
-            INSERT INTO triage_results (cve_id, image_digest, exposure_signal_state, adjustment, rationale, failed)
-            VALUES (?, ?, ?, ?, ?, ?)
+            INSERT INTO triage_results (cve_id, image_digest, exposure_signal_state, adjustment, rationale, failed, claimed)
+            VALUES (?, ?, ?, ?, ?, ?, 0)
             ON CONFLICT (cve_id, image_digest, exposure_signal_state)
-            DO UPDATE SET adjustment = excluded.adjustment, rationale = excluded.rationale, failed = excluded.failed
+            DO UPDATE SET adjustment = excluded.adjustment, rationale = excluded.rationale, failed = excluded.failed, claimed = 0
             """,
             (
                 outcome.cve_id,
@@ -204,14 +234,3 @@ def store_triage_outcomes(connection: sqlite3.Connection, outcomes: list[_Triage
             ),
         )
     connection.commit()
-
-
-def run_triage(connection: sqlite3.Connection, ports: "Ports") -> None:
-    """Composes every step for a caller with no lock to worry about - the
-    reference shape aidevops.app's own locked composition follows, same
-    relationship as aidevops.reconcile.reconcile has to aidevops.app.
-    """
-    candidates = fetch_pending_triage_candidates(connection)
-    candidates = enrich_with_threat_intel(candidates, ports.threat_intel)
-    outcomes = run_triage_model(ports.triage_model, candidates)
-    store_triage_outcomes(connection, outcomes)

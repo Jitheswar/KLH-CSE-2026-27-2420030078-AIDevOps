@@ -34,8 +34,7 @@ CREATE TABLE IF NOT EXISTS workload_pods (
 CREATE TABLE IF NOT EXISTS images (
     digest TEXT PRIMARY KEY,
     repository TEXT NOT NULL,
-    scanned_at TEXT,
-    scanning INTEGER NOT NULL DEFAULT 0
+    scanned_at TEXT
 );
 
 CREATE TABLE IF NOT EXISTS workload_images (
@@ -94,10 +93,39 @@ CREATE TABLE IF NOT EXISTS triage_results (
 );
 """
 
+# Columns added after a table's first release. `CREATE TABLE IF NOT EXISTS`
+# is a no-op against a database file that already has the table, so a
+# column introduced later has to be added explicitly - see `_migrate` -
+# or a restart against an existing `DATABASE_PATH` finds the old, narrower
+# table and every query naming the new column fails.
+#
+# `images.scanning` and `triage_results.claimed` are both in-flight claims
+# a reconcile pass takes out before doing the slow, unlocked work (a Trivy
+# scan, a DeepSeek call) the claim is guarding - see aidevops.reconcile and
+# aidevops.triage. Neither can legitimately still be held the moment a
+# process starts: whatever was claiming it no longer exists. `_migrate`
+# resets both to unclaimed on every connect, so a crash between claiming
+# and releasing does not orphan the claim forever.
+_MIGRATIONS: list[tuple[str, str, str]] = [
+    ("images", "scanning", "ALTER TABLE images ADD COLUMN scanning INTEGER NOT NULL DEFAULT 0"),
+    ("triage_results", "claimed", "ALTER TABLE triage_results ADD COLUMN claimed INTEGER NOT NULL DEFAULT 0"),
+]
+
+
+def _migrate(connection: sqlite3.Connection) -> None:
+    for table, column, ddl in _MIGRATIONS:
+        existing_columns = {row["name"] for row in connection.execute(f"PRAGMA table_info({table})").fetchall()}
+        if column not in existing_columns:
+            connection.execute(ddl)
+    connection.execute("UPDATE images SET scanning = 0 WHERE scanning != 0")
+    connection.execute("UPDATE triage_results SET claimed = 0 WHERE claimed != 0")
+    connection.commit()
+
 
 def connect(database_path: str) -> sqlite3.Connection:
     connection = sqlite3.connect(database_path, check_same_thread=False)
     connection.row_factory = sqlite3.Row
     connection.executescript(SCHEMA)
     connection.commit()
+    _migrate(connection)
     return connection

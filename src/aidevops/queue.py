@@ -142,10 +142,15 @@ def _fetch_triage_by_cve(connection: sqlite3.Connection) -> dict[str, _TriageInf
     this reads. Ordered by image_digest so that if more than one ever
     exists for a CVE at this key, the choice of which one wins is at least
     deterministic.
+
+    `claimed = 0` excludes a row an in-flight reconcile pass has claimed
+    but not yet resolved (see aidevops.triage) - its placeholder
+    `adjustment = 0, failed = 0` would otherwise render as a considered
+    "no adjustment" result rather than "not triaged yet".
     """
     rows = connection.execute(
         "SELECT cve_id, adjustment, rationale, failed FROM triage_results "
-        "WHERE exposure_signal_state = ? ORDER BY cve_id, image_digest",
+        "WHERE exposure_signal_state = ? AND claimed = 0 ORDER BY cve_id, image_digest",
         (ExposureSignalState().cache_key(),),
     ).fetchall()
     triage_by_cve: dict[str, _TriageInfo] = {}
