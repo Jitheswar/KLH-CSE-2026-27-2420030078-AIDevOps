@@ -136,12 +136,15 @@ def _resolve_priority(
 
 
 def _fetch_triage_by_cve(connection: sqlite3.Connection) -> dict[str, _TriageInfo]:
-    """Every candidate's Triage is cached at the "no Exposure Signal" key
-    for now - wiring Triage itself to react to a signal transition is
-    signal-driven re-Triage (a later ticket), so that is the only state
-    this reads. Ordered by image_digest so that if more than one ever
-    exists for a CVE at this key, the choice of which one wins is at least
-    deterministic.
+    """Every candidate's Triage, read at whichever Exposure Signal key its
+    representative Workload (see aidevops.triage.fetch_pending_triage_candidates)
+    currently carries live in `exposure_signals` - not a fixed key -
+    so a row this CVE was cached at before a signal transition is
+    transparently skipped in favour of whatever `retriage_workload` (see
+    aidevops.detection and aidevops.reconcile) has since written at the new
+    key, without anything needing to delete the stale row. Ordered by
+    image_digest so that if more than one row ever matches for a CVE, the
+    choice of which one wins is at least deterministic.
 
     `claimed = 0` excludes a row an in-flight reconcile pass has claimed
     but not yet resolved (see aidevops.triage) - its placeholder
@@ -149,17 +152,33 @@ def _fetch_triage_by_cve(connection: sqlite3.Connection) -> dict[str, _TriageInf
     "no adjustment" result rather than "not triaged yet".
     """
     rows = connection.execute(
-        "SELECT cve_id, adjustment, rationale, failed FROM triage_results "
-        "WHERE exposure_signal_state = ? AND claimed = 0 ORDER BY cve_id, image_digest",
-        (ExposureSignalState().cache_key(),),
+        """
+        SELECT
+            tr.cve_id AS cve_id,
+            tr.image_digest AS image_digest,
+            tr.adjustment AS adjustment,
+            tr.rationale AS rationale,
+            tr.failed AS failed,
+            tr.exposure_signal_state AS exposure_signal_state,
+            COALESCE(es.active, 0) AS signal_active,
+            COALESCE(es.magnitude, 0.0) AS signal_magnitude
+        FROM triage_results tr
+        JOIN workload_images wi ON wi.image_digest = tr.image_digest
+        JOIN workloads w ON w.id = wi.workload_id
+        LEFT JOIN exposure_signals es ON es.workload_id = w.id
+        WHERE tr.claimed = 0
+        ORDER BY tr.cve_id, tr.image_digest
+        """
     ).fetchall()
     triage_by_cve: dict[str, _TriageInfo] = {}
     for row in rows:
-        triage_by_cve.setdefault(
-            row["cve_id"],
-            _TriageInfo(
-                adjustment=clamp_adjustment(row["adjustment"]), rationale=row["rationale"], failed=bool(row["failed"])
-            ),
+        if row["cve_id"] in triage_by_cve:
+            continue
+        current_state = ExposureSignalState(active=bool(row["signal_active"]), magnitude=row["signal_magnitude"])
+        if row["exposure_signal_state"] != current_state.cache_key():
+            continue
+        triage_by_cve[row["cve_id"]] = _TriageInfo(
+            adjustment=clamp_adjustment(row["adjustment"]), rationale=row["rationale"], failed=bool(row["failed"])
         )
     return triage_by_cve
 

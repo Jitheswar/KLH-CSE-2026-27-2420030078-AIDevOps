@@ -27,6 +27,7 @@ from typing import TYPE_CHECKING
 from aidevops.baseline import TRAINING_LOOKBACK
 from aidevops.exposure_signal import ExposureSignal, detect_workload_exposure_signal
 from aidevops.ports.telemetry import TelemetryUnavailable
+from aidevops.reconcile import retriage_workload
 from aidevops.workload_detail import get_workload_pods
 
 if TYPE_CHECKING:
@@ -85,20 +86,47 @@ def detect_signal_for_workload(
     return detect_workload_exposure_signal(series_by_pod, end=now, lookback=training_lookback)
 
 
-def store_exposure_signal(connection: sqlite3.Connection, workload_id: int, active: bool) -> None:
+def store_exposure_signal(connection: sqlite3.Connection, workload_id: int, active: bool, magnitude: float = 0.0) -> bool:
     """The DB-writing step - see the module docstring. Committed on its
     own per Workload, same reasoning as aidevops.reconcile.store_scan_result:
     a Workload's result that's ready is visible immediately rather than
     waiting for the slowest one in the pass.
+
+    Returns whether `active` just flipped from what was stored before -
+    the fire or clear transition that drives signal-driven re-Triage (see
+    `run_detection` and aidevops.app). A Workload with no prior row is
+    treated as having been inactive, so a Workload firing on its very
+    first ever detection pass still counts as a transition.
+
+    While a Workload stays continuously active, `magnitude` is pinned to
+    whatever it was the moment it fired rather than overwritten with each
+    detection pass's freshly recomputed value - the same freeze reasoning
+    ADR-0003 already applies to the Baseline training window while active.
+    `magnitude` feeds `ExposureSignalState.cache_key()` (see
+    aidevops.domain), and a live value that drifts by real telemetry noise
+    on every tick would otherwise hand every periodic reconcile pass a
+    fresh cache key for an already-Triaged CVE, re-billing the model for
+    it every pass rather than only on the transition that actually
+    happened.
     """
+    previous = connection.execute(
+        "SELECT active, magnitude FROM exposure_signals WHERE workload_id = ?", (workload_id,)
+    ).fetchone()
+    was_active = bool(previous["active"]) if previous is not None else False
+    transitioned = active != was_active
+
+    if active and not transitioned:
+        magnitude = previous["magnitude"]
+
     connection.execute(
         """
-        INSERT INTO exposure_signals (workload_id, active) VALUES (?, ?)
-        ON CONFLICT (workload_id) DO UPDATE SET active = excluded.active
+        INSERT INTO exposure_signals (workload_id, active, magnitude) VALUES (?, ?, ?)
+        ON CONFLICT (workload_id) DO UPDATE SET active = excluded.active, magnitude = excluded.magnitude
         """,
-        (workload_id, int(active)),
+        (workload_id, int(active), magnitude),
     )
     connection.commit()
+    return transitioned
 
 
 def run_detection(
@@ -112,13 +140,21 @@ def run_detection(
     the module docstring. `aidevops.app` does not call this directly; it
     has its own locked composition for the same reasons `aidevops.reconcile`
     gives for `reconcile()`.
+
+    A fire or clear transition (see `store_exposure_signal`) re-Triages
+    that Workload's Vulnerabilities immediately, in the same pass - not
+    deferred to the next periodic reconcile - via `retriage_workload`,
+    scoped to exactly this Workload so no other Workload's cached Triages
+    are touched.
     """
     for workload in list_workloads_with_pods(connection):
         signal = detect_signal_for_workload(ports, workload.pod_names, now, fetch_lookback, training_lookback)
         if signal is None:
             logger.warning("telemetry unavailable for workload %s/%s, skipping detection", workload.namespace, workload.name)
             continue
-        store_exposure_signal(connection, workload.id, signal.active)
+        transitioned = store_exposure_signal(connection, workload.id, signal.active, signal.magnitude)
+        if transitioned:
+            retriage_workload(connection, ports, workload.id)
 
 
 def get_active_exposure_signal_workload_ids(connection: sqlite3.Connection) -> set[int]:

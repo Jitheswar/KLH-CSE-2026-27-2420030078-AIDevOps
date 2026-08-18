@@ -129,7 +129,20 @@ def _locked_detect(connection: sqlite3.Connection, ports: Ports, db_lock: thread
         if signal is None:
             continue
         with db_lock:
-            store_exposure_signal(connection, workload.id, signal.active)
+            transitioned = store_exposure_signal(connection, workload.id, signal.active, signal.magnitude)
+
+        # A fire or clear transition re-Triages this Workload's
+        # Vulnerabilities right now, in this same detection pass - not
+        # deferred to the next inventory loop tick - same locked/unlocked
+        # split as the Triage steps in _locked_reconcile, scoped to this
+        # one Workload (see aidevops.reconcile.retriage_workload).
+        if transitioned:
+            with db_lock:
+                triage_candidates = fetch_pending_triage_candidates(connection, workload_id=workload.id)
+            triage_candidates = enrich_with_threat_intel(triage_candidates, ports.threat_intel)
+            outcomes = run_triage_model(ports.triage_model, triage_candidates)
+            with db_lock:
+                store_triage_outcomes(connection, outcomes)
 
 
 def create_app(

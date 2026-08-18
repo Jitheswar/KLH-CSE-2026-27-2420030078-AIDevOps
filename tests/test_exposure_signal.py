@@ -125,6 +125,23 @@ def test_a_steady_workload_does_not_raise_a_signal() -> None:
     assert signal.active is False
 
 
+def test_the_signal_carries_a_positive_magnitude_while_firing_and_zero_when_quiet() -> None:
+    """Ticket 12: the re-Triage prompt carries the signal's magnitude, not
+    just whether it is active - a quiet Workload must report exactly 0.0,
+    not merely "low", since it makes no anomaly claim at all.
+    """
+    quiet_series_by_pod = _quiet_history("pod-a")
+    quiet_end = quiet_series_by_pod["pod-a"][-1].timestamp
+    quiet_signal = detect_workload_exposure_signal(quiet_series_by_pod, end=quiet_end)
+    assert quiet_signal.magnitude == 0.0
+
+    spike = _spiking_samples(20, seed=1, start=quiet_end + _STEP)
+    firing_series_by_pod = {"pod-a": quiet_series_by_pod["pod-a"] + spike}
+    firing_signal = detect_workload_exposure_signal(firing_series_by_pod, end=spike[-1].timestamp)
+    assert firing_signal.active is True
+    assert firing_signal.magnitude > 0.0
+
+
 def test_spiking_one_replica_of_three_raises_the_signal_on_the_workload() -> None:
     series_by_pod = {
         **_quiet_history("pod-quiet-1", seed=_QUIET_SEED),

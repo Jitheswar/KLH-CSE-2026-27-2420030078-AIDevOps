@@ -59,6 +59,10 @@ class SignalState:
 @dataclass(frozen=True)
 class ExposureSignal:
     active: bool
+    # How far outside normal the most recently evaluated window sits, per
+    # Baseline.anomaly_magnitude - 0.0 whenever inactive, so the Triage
+    # prompt never carries a stale magnitude from a cleared incident.
+    magnitude: float = 0.0
 
 
 def detect_workload_exposure_signal(
@@ -86,6 +90,7 @@ def detect_workload_exposure_signal(
     state = SignalState()
     frozen_training_end: datetime | None = None
     streak_start: datetime | None = None
+    step_magnitude = 0.0
 
     for step_end in step_ends:
         training_end = frozen_training_end if state.active else step_end
@@ -103,6 +108,9 @@ def detect_workload_exposure_signal(
         # the shared pooled Baseline, and the Workload is anomalous if any
         # one of them is - the maximum, not an average across replicas.
         step_anomalous = any(baseline.is_anomalous(w) for w in pod_windows_here)
+        # Same per-pod maximum for magnitude, so one severely misbehaving
+        # replica is never diluted by its quiet siblings here either.
+        step_magnitude = max((baseline.anomaly_magnitude(w) for w in pod_windows_here), default=0.0)
 
         if not step_anomalous:
             streak_start = None
@@ -117,4 +125,4 @@ def detect_workload_exposure_signal(
         elif not state.active and was_active:
             frozen_training_end = None
 
-    return ExposureSignal(active=state.active)
+    return ExposureSignal(active=state.active, magnitude=step_magnitude if state.active else 0.0)

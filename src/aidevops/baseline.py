@@ -116,15 +116,35 @@ class Baseline:
             return bool(prediction[0] == -1)
         return self._z_score_anomalous(features)
 
+    def anomaly_magnitude(self, features: WindowFeatures) -> float:
+        """How far outside normal this window sits, not just whether it is
+        - the Exposure Signal's magnitude, for the Triage prompt to weigh a
+        severe spike more heavily than a marginal one.
+
+        Always non-negative and 0.0 when not yet established, same
+        "no claim" reasoning as `is_anomalous`.
+        """
+        if not self.established:
+            return 0.0
+        if self._forest is not None:
+            # decision_function is negative for outliers, positive for
+            # inliers - negate and floor at 0 so a comfortably normal window
+            # reads as 0 rather than a negative magnitude.
+            return max(0.0, -float(self._forest.decision_function([features.as_vector()])[0]))
+        return self._max_z_score(features)
+
     def _z_score_anomalous(self, features: WindowFeatures) -> bool:
+        return self._max_z_score(features) > _Z_SCORE_THRESHOLD
+
+    def _max_z_score(self, features: WindowFeatures) -> float:
+        max_z = 0.0
         for name, value in zip(_FEATURE_NAMES, features.as_vector(), strict=True):
             std = self._stds.get(name, 0.0)
             if std == 0.0:
                 continue
             z = abs(value - self._means.get(name, 0.0)) / std
-            if z > _Z_SCORE_THRESHOLD:
-                return True
-        return False
+            max_z = max(max_z, z)
+        return max_z
 
     def band(self, metric: str) -> BaselineBand | None:
         """The normal range for one chartable metric (cpu, network_transmit,

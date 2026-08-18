@@ -61,6 +61,22 @@ def reconcile(connection: sqlite3.Connection, ports: "Ports") -> None:
     store_triage_outcomes(connection, outcomes)
 
 
+def retriage_workload(connection: sqlite3.Connection, ports: "Ports", workload_id: int) -> None:
+    """Re-runs Triage for exactly one Workload's Vulnerabilities - the
+    surgical re-Triage an Exposure Signal transition triggers (see
+    aidevops.detection.run_detection and the spec), rather than
+    re-checking the whole Candidate Set the way `reconcile` does.
+
+    Same unlocked, no-lock-to-worry-about shape as `reconcile` above;
+    `aidevops.app` has its own locked composition of the same steps for the
+    reasons the module docstring gives.
+    """
+    triage_candidates = fetch_pending_triage_candidates(connection, workload_id=workload_id)
+    triage_candidates = enrich_with_threat_intel(triage_candidates, ports.threat_intel)
+    outcomes = run_triage_model(ports.triage_model, triage_candidates)
+    store_triage_outcomes(connection, outcomes)
+
+
 def reconcile_workloads(
     connection: sqlite3.Connection, ports: "Ports", workloads: list["Workload"]
 ) -> list["ContainerImage"]:

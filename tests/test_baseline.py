@@ -14,6 +14,7 @@ ticket 09's.
 from __future__ import annotations
 
 import random
+from dataclasses import replace
 from datetime import datetime, timedelta
 
 from aidevops.baseline import (
@@ -78,6 +79,27 @@ def test_cold_start_makes_no_claim_about_normal_or_abnormal() -> None:
     baseline = train_baseline(windows)
 
     assert baseline.is_anomalous(windows[-1]) is False
+
+
+def test_cold_start_magnitude_is_zero() -> None:
+    series = _busy_series(MIN_WINDOWS_FOR_FOREST - 5)
+    windows = compute_window_features(series)
+    baseline = train_baseline(windows)
+
+    assert baseline.anomaly_magnitude(windows[-1]) == 0.0
+
+
+def test_anomaly_magnitude_is_higher_for_an_anomalous_window_than_a_normal_one() -> None:
+    series = _busy_series(200)
+    windows = compute_window_features(series)
+    baseline = train_baseline(windows)
+    normal_window = _representative_window(series)
+
+    # Features pushed far outside the trained range, so this reads as
+    # anomalous rather than merely a fresh, in-distribution sample.
+    anomalous_window = replace(normal_window, cpu=500.0, network_transmit=5000.0, network_receive=1.0)
+
+    assert baseline.anomaly_magnitude(anomalous_window) > baseline.anomaly_magnitude(normal_window)
 
 
 def test_a_busy_workload_is_not_reported_abnormal_for_being_busy() -> None:

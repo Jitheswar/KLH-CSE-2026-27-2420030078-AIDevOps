@@ -73,7 +73,8 @@ CREATE TABLE IF NOT EXISTS candidate_priorities (
 -- into incrementally.
 CREATE TABLE IF NOT EXISTS exposure_signals (
     workload_id INTEGER PRIMARY KEY REFERENCES workloads (id) ON DELETE CASCADE,
-    active INTEGER NOT NULL DEFAULT 0
+    active INTEGER NOT NULL DEFAULT 0,
+    magnitude REAL NOT NULL DEFAULT 0.0
 );
 
 -- Per ADR-0004, cached keyed on the CVE, the image, and the Workload's
@@ -109,6 +110,7 @@ CREATE TABLE IF NOT EXISTS triage_results (
 _MIGRATIONS: list[tuple[str, str, str]] = [
     ("images", "scanning", "ALTER TABLE images ADD COLUMN scanning INTEGER NOT NULL DEFAULT 0"),
     ("triage_results", "claimed", "ALTER TABLE triage_results ADD COLUMN claimed INTEGER NOT NULL DEFAULT 0"),
+    ("exposure_signals", "magnitude", "ALTER TABLE exposure_signals ADD COLUMN magnitude REAL NOT NULL DEFAULT 0.0"),
 ]
 
 

@@ -19,14 +19,9 @@ from dataclasses import dataclass
 
 from aidevops.domain import ExposureSignalState, TriageContext, Vulnerability
 from aidevops.ports.threat_intel import ThreatIntelPort
-from aidevops.ports.triage_model import TriageModelPort, TriageUnavailable, clamp_adjustment
+from aidevops.ports.triage_model import TriageModelPort, clamp_adjustment
 
 logger = logging.getLogger(__name__)
-
-# No Workload carries an Exposure Signal from this module's point of view -
-# wiring Triage to react to one is signal-driven re-Triage (a later
-# ticket). Every candidate is triaged at this fixed key until then.
-_NO_SIGNAL = ExposureSignalState()
 
 
 @dataclass(frozen=True)
@@ -45,9 +40,24 @@ class _TriageOutcome:
     failed: bool
 
 
-def fetch_pending_triage_candidates(connection: sqlite3.Connection) -> list[_TriageCandidate]:
+def fetch_pending_triage_candidates(
+    connection: sqlite3.Connection, workload_id: int | None = None
+) -> list[_TriageCandidate]:
     """Every Candidate Set member that has no cached, successful Triage at
     its current Exposure Signal key, claiming each one it returns.
+
+    The Exposure Signal carried into each row's `TriageContext` is read
+    live off `exposure_signals` for the Workload the row is triaged
+    against, not a fixed placeholder - so a Workload whose signal just
+    fired or cleared lands on a fresh `exposure_signal_state` cache key
+    with nothing cached at it yet, and is picked up here without anything
+    needing to explicitly delete the stale row at its old key.
+
+    `workload_id`, when given, restricts this to one Workload's own
+    Vulnerabilities - the surgical re-Triage a signal transition triggers
+    (see aidevops.detection): only that Workload's rows are considered, so
+    a CVE also present elsewhere in the cluster is untouched unless that
+    other Workload transitions too.
 
     The claim (`triage_results.claimed`, mirroring `images.scanning` - see
     aidevops.reconcile and aidevops.db) is what stops two reconcile passes
@@ -58,13 +68,17 @@ def fetch_pending_triage_candidates(connection: sqlite3.Connection) -> list[_Tri
     blocking once its outcome is stored, so a transient model outage is
     retried on the next reconcile rather than stuck forever.
 
-    One representative image is chosen per CVE - the lexicographically
-    smallest digest among the images it appears in - so a CVE occurring in
+    One representative image is chosen per CVE - the Workload with an
+    active Exposure Signal, if the CVE reaches one, else the
+    lexicographically smallest digest among the images it appears in
+    (within `workload_id`'s scope, when given) - so a CVE occurring in
     several images is still Triaged once, matching the spec's per-CVE
-    dedup applied everywhere else in the Candidate Set.
+    dedup applied everywhere else in the Candidate Set. Preferring an
+    active Workload over the tie-break is what keeps a CVE that also sits
+    on some quiet, alphabetically-earlier Workload from being Triaged
+    against the quiet one's context and never escalated at all.
     """
-    rows = connection.execute(
-        """
+    query = """
         SELECT
             cp.cve_id AS cve_id,
             v.image_digest AS image_digest,
@@ -77,35 +91,48 @@ def fetch_pending_triage_candidates(connection: sqlite3.Connection) -> list[_Tri
             i.repository AS image_repository,
             w.name AS workload_name,
             w.namespace AS workload_namespace,
-            w.externally_reachable AS externally_reachable
+            w.externally_reachable AS externally_reachable,
+            COALESCE(es.active, 0) AS signal_active,
+            COALESCE(es.magnitude, 0.0) AS signal_magnitude
         FROM candidate_priorities cp
         JOIN vulnerabilities v ON v.cve_id = cp.cve_id
         JOIN images i ON i.digest = v.image_digest
         JOIN workload_images wi ON wi.image_digest = v.image_digest
         JOIN workloads w ON w.id = wi.workload_id
+        LEFT JOIN exposure_signals es ON es.workload_id = w.id
+        {where}
         ORDER BY cp.cve_id, v.image_digest, w.namespace, w.name
-        """
-    ).fetchall()
+    """
+    where = "WHERE w.id = ?" if workload_id is not None else ""
+    params = (workload_id,) if workload_id is not None else ()
+    rows = connection.execute(query.format(where=where), params).fetchall()
 
     # Blocked, not just "cached": a row counts here whether it already
     # succeeded (failed = 0) or another in-flight pass currently claims it
     # (claimed = 1) - only a stale, unclaimed failure is still eligible.
+    # Keyed on the full (cve, image, signal state) triple, not a fixed
+    # state, since different Workloads can have different candidates
+    # blocked at different Exposure Signal keys at the same time.
     blocked = {
-        (row["cve_id"], row["image_digest"])
+        (row["cve_id"], row["image_digest"], row["exposure_signal_state"])
         for row in connection.execute(
-            "SELECT cve_id, image_digest FROM triage_results "
-            "WHERE exposure_signal_state = ? AND (failed = 0 OR claimed = 1)",
-            (_NO_SIGNAL.cache_key(),),
+            "SELECT cve_id, image_digest, exposure_signal_state FROM triage_results WHERE failed = 0 OR claimed = 1"
         ).fetchall()
     }
 
-    candidates: list[_TriageCandidate] = []
-    seen_cves: set[str] = set()
+    # Group rows by CVE, in the query's own tie-break order, then within
+    # each group prefer a row whose Workload currently has an active
+    # Exposure Signal - see the docstring above - falling back to the
+    # first row (the tie-break order) when none of them do.
+    rows_by_cve: dict[str, list[sqlite3.Row]] = {}
     for row in rows:
-        if row["cve_id"] in seen_cves:
-            continue
-        seen_cves.add(row["cve_id"])
-        if (row["cve_id"], row["image_digest"]) in blocked:
+        rows_by_cve.setdefault(row["cve_id"], []).append(row)
+
+    candidates: list[_TriageCandidate] = []
+    for cve_rows in rows_by_cve.values():
+        row = next((r for r in cve_rows if r["signal_active"]), cve_rows[0])
+        exposure_signal = ExposureSignalState(active=bool(row["signal_active"]), magnitude=row["signal_magnitude"])
+        if (row["cve_id"], row["image_digest"], exposure_signal.cache_key()) in blocked:
             continue
 
         vulnerability = Vulnerability(
@@ -125,7 +152,7 @@ def fetch_pending_triage_candidates(connection: sqlite3.Connection) -> list[_Tri
             workload_name=row["workload_name"],
             workload_namespace=row["workload_namespace"],
             externally_reachable=bool(row["externally_reachable"]),
-            exposure_signal=_NO_SIGNAL,
+            exposure_signal=exposure_signal,
         )
         candidates.append(_TriageCandidate(context=context, image_digest=row["image_digest"]))
 
@@ -197,10 +224,16 @@ def _triage_one(candidate: _TriageCandidate, triage_model: TriageModelPort) -> _
             rationale=result.rationale,
             failed=False,
         )
-    except TriageUnavailable:
+    except Exception:
         # Per the spec: a failed or unavailable model call leaves the
         # base score standing and marks the row as such, so a fallback
-        # ranking is never read as a considered one.
+        # ranking is never read as a considered one. Catching broadly
+        # here (not just TriageUnavailable) matters as much as the spec
+        # requirement itself: run_triage_model claims each candidate's row
+        # before calling this, and only releases the claim once its outcome
+        # comes back through store_triage_outcomes - an exception escaping
+        # executor.map instead would abandon that claim forever, since
+        # nothing else ever clears it (see `_claim` and `blocked` above).
         logger.exception("triage failed for %s, base score stands", cve_id)
         return _TriageOutcome(
             cve_id=cve_id,
