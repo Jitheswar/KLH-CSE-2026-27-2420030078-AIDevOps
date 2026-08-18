@@ -26,6 +26,11 @@ class Workload:
     externally_reachable: bool
 
 
+#: The three telemetry metrics tracked per pod, in the order every chart,
+#: Prometheus query and per-metric aggregation shares.
+METRIC_NAMES: tuple[str, str, str] = ("cpu", "network_transmit", "network_receive")
+
+
 @dataclass(frozen=True)
 class TelemetrySample:
     timestamp: datetime
@@ -69,8 +74,8 @@ class TriageAdjustment:
 @dataclass(frozen=True)
 class ExposureSignalState:
     """A Workload's current Exposure Signal, as the Triage model port needs
-    to see it. Detection itself is a later ticket - until then every caller
-    passes the default, inactive state.
+    to see it. Defaults to the inactive state for any caller that has not
+    run detection yet.
     """
 
     active: bool = False
@@ -79,8 +84,8 @@ class ExposureSignalState:
     def cache_key(self) -> str:
         """Part of the Triage cache key, per the spec: caching on this
         alongside the CVE and image is what makes a signal transition
-        (a later ticket) invalidate exactly the Triages it should, by
-        simply changing which cache entry a lookup lands on.
+        invalidate exactly the Triages it should, by simply changing which
+        cache entry a lookup lands on.
         """
         return f"active:{self.magnitude:.3f}" if self.active else "inactive"
 

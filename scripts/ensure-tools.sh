@@ -10,7 +10,7 @@ BIN_DIR="$ROOT_DIR/bin"
 mkdir -p "$BIN_DIR"
 
 KIND_VERSION="v0.30.0"
-TRIVY_VERSION="v0.74.0"
+TRIVY_VERSION="$(cat "$ROOT_DIR/.trivy-version")"
 
 if command -v kubectl >/dev/null 2>&1 || [ -x "$BIN_DIR/kubectl" ]; then
     echo "kubectl already available"

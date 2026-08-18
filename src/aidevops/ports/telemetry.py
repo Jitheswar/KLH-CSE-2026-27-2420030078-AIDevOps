@@ -13,7 +13,7 @@ from typing import Protocol
 
 import httpx
 
-from aidevops.domain import TelemetrySample, TelemetrySeries
+from aidevops.domain import METRIC_NAMES, TelemetrySample, TelemetrySeries
 
 
 class TelemetryPort(Protocol):
@@ -51,11 +51,17 @@ class FakeTelemetry:
 _RATE_WINDOW = "1m"
 _STEP_SECONDS = 15
 
-_QUERIES_BY_METRIC = {
-    "cpu": 'sum(rate(container_cpu_usage_seconds_total{{pod="{pod}", container!="", container!="POD"}}[{window}]))',
-    "network_transmit": 'sum(rate(container_network_transmit_bytes_total{{pod="{pod}", interface!=""}}[{window}]))',
-    "network_receive": 'sum(rate(container_network_receive_bytes_total{{pod="{pod}", interface!=""}}[{window}]))',
-}
+_QUERIES_BY_METRIC = dict(
+    zip(
+        METRIC_NAMES,
+        (
+            'sum(rate(container_cpu_usage_seconds_total{{pod="{pod}", container!="", container!="POD"}}[{window}]))',
+            'sum(rate(container_network_transmit_bytes_total{{pod="{pod}", interface!=""}}[{window}]))',
+            'sum(rate(container_network_receive_bytes_total{{pod="{pod}", interface!=""}}[{window}]))',
+        ),
+        strict=True,
+    )
+)
 
 
 class PrometheusTelemetry:
@@ -125,9 +131,7 @@ def merge_metric_series(series_by_metric: dict[str, dict[datetime, float]]) -> l
     return [
         TelemetrySample(
             timestamp=timestamp,
-            cpu=series_by_metric.get("cpu", {}).get(timestamp, 0.0),
-            network_transmit=series_by_metric.get("network_transmit", {}).get(timestamp, 0.0),
-            network_receive=series_by_metric.get("network_receive", {}).get(timestamp, 0.0),
+            **{metric: series_by_metric.get(metric, {}).get(timestamp, 0.0) for metric in METRIC_NAMES},
         )
         for timestamp in sorted(all_timestamps)
     ]

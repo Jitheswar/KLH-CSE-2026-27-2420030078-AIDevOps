@@ -4,8 +4,9 @@
 # mapped out to the host, which is what the stock ingress-nginx "kind"
 # provider manifest (applied by `make cluster-up`) expects to bind to.
 # Prometheus's NodePort (deploy/prometheus/04-service.yaml) is mapped out
-# the same way, since the platform runs on the host until ticket 13 and has
-# no other route in.
+# the same way, so the platform can reach it from the host with `make run`;
+# the in-cluster deployment (deploy/platform/) instead reaches Prometheus
+# through cluster DNS and does not need this mapping.
 kind: Cluster
 apiVersion: kind.x-k8s.io/v1alpha4
 name: aidevops

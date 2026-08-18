@@ -3,9 +3,7 @@
 This is the loop body the spec requires to be shared: the periodic
 inventory loop and the manual rescan control both go through
 `reconcile_workloads` and `scan_pending_images`, rather than each having
-their own copy of this logic. `reconcile` composes the two for a caller with
-no locking to worry about; `aidevops.app` calls them separately because it
-does.
+their own copy of this logic.
 
 Scanning is keyed on image digest, which is immutable, so a digest already
 recorded as scanned is never re-scanned - see `_mark_image_discovered`. That
@@ -21,11 +19,11 @@ request for the queue page blocks behind it.
 
 from __future__ import annotations
 
+import contextlib
 import logging
 import sqlite3
-from typing import TYPE_CHECKING, Callable
+from typing import TYPE_CHECKING, Callable, ContextManager
 
-from aidevops.candidates import fetch_vulnerability_rows, score_candidate_set, store_candidate_set
 from aidevops.triage import enrich_with_threat_intel, fetch_pending_triage_candidates, run_triage_model, store_triage_outcomes
 
 if TYPE_CHECKING:
@@ -35,46 +33,39 @@ if TYPE_CHECKING:
 logger = logging.getLogger(__name__)
 
 
-def reconcile(connection: sqlite3.Connection, ports: "Ports") -> None:
-    """Composes every reconcile step for a caller with no lock to worry
-    about. `aidevops.app` does not call this directly - it has its own
-    locked composition of the same steps, for the reasons the module
-    docstring above gives - so this is the reference shape that
-    composition follows, not a second, drifting code path in its own
-    right.
-    """
-    workloads = ports.cluster_inventory.list_workloads()
-    pending = reconcile_workloads(connection, ports, workloads)
-    scan_pending_images(connection, ports, pending)
-    # Re-run on every pass, not only when a scan wrote something new - the
-    # threat intel snapshot itself does not change mid-process, but this
-    # is the loop body the periodic loop and the manual rescan share.
-    rows = fetch_vulnerability_rows(connection)
-    candidates = score_candidate_set(rows, ports.threat_intel)
-    store_candidate_set(connection, candidates)
+def run_triage_sequence(
+    connection: sqlite3.Connection,
+    ports: "Ports",
+    db_lock: ContextManager[None] = contextlib.nullcontext(),
+    workload_id: int | None = None,
+) -> None:
+    """Fetches, enriches, scores and stores Triage outcomes for whichever
+    Candidate Set members still need one - every pending one when
+    `workload_id` is None, or only that Workload's when set. Shared by the
+    periodic reconcile, the periodic detection pass, and signal-driven
+    re-Triage (`retriage_workload` below), so the sequence is defined once.
 
-    # Triages every Candidate Set member still missing one, per the spec's
-    # per-CVE-per-image cache - see aidevops.triage.
-    triage_candidates = fetch_pending_triage_candidates(connection)
+    `db_lock` brackets only the SQL read and the SQL write; the enrich and
+    model-scoring steps between them run without it, since a real Triage
+    call is a DeepSeek request per Vulnerability and must not hold up every
+    other request against `connection`. Callers with no lock to worry about
+    (tests, `retriage_workload`) get a no-op lock by default.
+    """
+    with db_lock:
+        triage_candidates = fetch_pending_triage_candidates(connection, workload_id=workload_id)
     triage_candidates = enrich_with_threat_intel(triage_candidates, ports.threat_intel)
     outcomes = run_triage_model(ports.triage_model, triage_candidates)
-    store_triage_outcomes(connection, outcomes)
+    with db_lock:
+        store_triage_outcomes(connection, outcomes)
 
 
 def retriage_workload(connection: sqlite3.Connection, ports: "Ports", workload_id: int) -> None:
     """Re-runs Triage for exactly one Workload's Vulnerabilities - the
     surgical re-Triage an Exposure Signal transition triggers (see
     aidevops.detection.run_detection and the spec), rather than
-    re-checking the whole Candidate Set the way `reconcile` does.
-
-    Same unlocked, no-lock-to-worry-about shape as `reconcile` above;
-    `aidevops.app` has its own locked composition of the same steps for the
-    reasons the module docstring gives.
+    re-checking the whole Candidate Set.
     """
-    triage_candidates = fetch_pending_triage_candidates(connection, workload_id=workload_id)
-    triage_candidates = enrich_with_threat_intel(triage_candidates, ports.threat_intel)
-    outcomes = run_triage_model(ports.triage_model, triage_candidates)
-    store_triage_outcomes(connection, outcomes)
+    run_triage_sequence(connection, ports, workload_id=workload_id)
 
 
 def reconcile_workloads(

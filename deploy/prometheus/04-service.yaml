@@ -1,6 +1,8 @@
-# NodePort, not ClusterIP: the platform runs on the host until ticket 13,
-# so it reaches Prometheus through the kind node's port mapping in
-# deploy/kind/kind-config.yaml rather than through in-cluster DNS.
+# NodePort, not ClusterIP: `make run` runs the platform on the host, so it
+# reaches Prometheus through the kind node's port mapping in
+# deploy/kind/kind-config.yaml rather than through in-cluster DNS. The
+# in-cluster deployment (deploy/platform/) uses this Service's ClusterIP
+# DNS name directly and ignores the NodePort.
 apiVersion: v1
 kind: Service
 metadata:

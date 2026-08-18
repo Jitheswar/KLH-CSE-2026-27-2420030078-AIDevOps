@@ -313,8 +313,8 @@ def test_magnitude_is_pinned_while_a_signal_stays_continuously_active() -> None:
     3 decimal places - without pinning, every one of those harmless
     recomputes would look like a fresh Exposure Signal state to
     `fetch_pending_triage_candidates`, and the unscoped periodic reconcile
-    (aidevops.reconcile.reconcile, aidevops.app._locked_reconcile) would
-    re-Triage - and re-bill the model for - every actively-firing
+    (aidevops.app._locked_reconcile) would re-Triage - and re-bill the
+    model for - every actively-firing
     Workload's CVEs on every single pass, not just the one transition that
     actually happened.
     """
@@ -377,8 +377,8 @@ def test_a_cve_shared_with_a_quiet_alphabetically_earlier_workload_is_still_esca
     store_exposure_signal(connection, workload_id=firing_workload_id, active=True, magnitude=3.0)
 
     # Unscoped - the same call the periodic full reconcile makes
-    # (aidevops.reconcile.reconcile, aidevops.app._locked_reconcile), which
-    # sees both Workloads and has to choose one representative context.
+    # (aidevops.app._locked_reconcile), which sees both Workloads and has
+    # to choose one representative context.
     candidates = fetch_pending_triage_candidates(connection)
 
     assert len(candidates) == 1

@@ -1,14 +1,14 @@
 """Reads the queue view's rows out of SQLite.
 
 The HTTP layer only ever reads from SQLite, never from a port directly - the
-inventory-and-scan and telemetry-and-detection loops (later tickets) are
+inventory-and-scan and telemetry-and-detection loops (see aidevops.app) are
 what write into it.
 """
 
 from __future__ import annotations
 
 import sqlite3
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 
 from aidevops.candidates import SEVERITY_SCORE
 from aidevops.domain import ExposureSignalState
@@ -49,7 +49,9 @@ class _TriageInfo:
     failed: bool
 
 
-def get_queue_rows(connection: sqlite3.Connection, *, apply_adjustment: bool = True) -> list[QueueRow]:
+def get_queue_rows(
+    connection: sqlite3.Connection, *, apply_adjustment: bool = True, workload_id: int | None = None
+) -> list[QueueRow]:
     """One row per Candidate Set member - see aidevops.candidates - ranked
     by Contextual Priority, with Severity displayed alongside it per the
     spec. A Vulnerability the pre-filter did not select never reaches this
@@ -59,6 +61,9 @@ def get_queue_rows(connection: sqlite3.Connection, *, apply_adjustment: bool = T
     it off, every row falls back to its base score, unchanged, and the
     ranking re-renders without touching anything already stored - see
     aidevops.triage and ADR-0004.
+
+    `workload_id` scopes the result to one Workload's own Vulnerabilities -
+    see aidevops.app.workload_detail - rather than the whole Candidate Set.
     """
     triage_by_cve = _fetch_triage_by_cve(connection)
     cursor = connection.execute(
@@ -75,8 +80,10 @@ def get_queue_rows(connection: sqlite3.Connection, *, apply_adjustment: bool = T
         JOIN workload_images wi ON wi.image_digest = v.image_digest
         JOIN workloads w ON w.id = wi.workload_id
         LEFT JOIN exposure_signals es ON es.workload_id = w.id
+        WHERE (:workload_id IS NULL OR w.id = :workload_id)
         ORDER BY cp.base_priority DESC, v.cve_id
-        """
+        """,
+        {"workload_id": workload_id},
     )
 
     workloads_by_cve: dict[str, QueueRow] = {}
@@ -109,26 +116,21 @@ def get_queue_rows(connection: sqlite3.Connection, *, apply_adjustment: bool = T
             # than showing whichever image's row this join happened to
             # visit first.
             if SEVERITY_SCORE.get(row["severity"].upper(), 0) > SEVERITY_SCORE.get(existing.severity.upper(), 0):
-                workloads_by_cve[row["cve_id"]] = QueueRow(
-                    cve_id=existing.cve_id,
-                    severity=row["severity"],
-                    base_priority=existing.base_priority,
-                    contextual_priority=existing.contextual_priority,
-                    rationale=existing.rationale,
-                    triage_failed=existing.triage_failed,
-                    affected_workloads=existing.affected_workloads,
-                )
-                existing = workloads_by_cve[row["cve_id"]]
+                existing = replace(existing, severity=row["severity"])
+                workloads_by_cve[row["cve_id"]] = existing
             if workload not in existing.affected_workloads:
-                existing.affected_workloads.append(workload)
+                workloads_by_cve[row["cve_id"]] = replace(
+                    existing, affected_workloads=[*existing.affected_workloads, workload]
+                )
 
     # The join above is keyed for insertion order, not display order - the
     # dict groups a CVE's Workloads together but does not preserve the
     # SQL ORDER BY once duplicate cve_id rows collapse into one entry.
     rows = sorted(workloads_by_cve.values(), key=lambda row: (-row.contextual_priority, row.cve_id))
-    for row in rows:
-        row.affected_workloads.sort(key=lambda workload: (workload.namespace, workload.name))
-    return rows
+    return [
+        replace(row, affected_workloads=sorted(row.affected_workloads, key=lambda workload: (workload.namespace, workload.name)))
+        for row in rows
+    ]
 
 
 def _resolve_priority(

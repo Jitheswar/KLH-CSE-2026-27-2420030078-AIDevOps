@@ -30,7 +30,8 @@ This file is the ground truth the Seam B live tests use to measure detection lat
 The Scenario image is attached to the `nginx-legacy` Workload's already-running pod as an **ephemeral container** (`kubectl debug ... --attach=false`), not added to the Deployment's pod template.
 Because it shares the pod with the real nginx container, its CPU and network behaviour is attributed to the same Workload a real compromise of that container would affect, without touching the nginx image itself.
 
-This is deliberately not a Deployment template patch: Kubernetes cannot add a regular container to a pod's template without replacing the pod under a new name, which would throw away every second of telemetry history the detector had already built up for it - exactly the history a real compromise of the running container would never disturb. An ephemeral container attaches to the pod that is already there, so its identity - and the detector's Baseline for it - survives injection.
+This is deliberately not a Deployment template patch: Kubernetes cannot add a regular container to a pod's template without replacing the pod under a new name, which would throw away every second of telemetry history the detector had already built up for it - exactly the history a real compromise of the running container would never disturb.
+An ephemeral container attaches to the pod that is already there, so its identity - and the detector's Baseline for it - survives injection.
 
 The tradeoff is on the way out: an ephemeral container cannot be removed from a running pod once added, a Kubernetes API restriction rather than a choice made here. `scenario-miner-stop` returns to normal by restarting the Deployment's rollout instead - since the pod template itself was never touched, the fresh pod that creates has no ephemeral container to begin with, and is exactly the shape `deploy/seed/01-nginx-legacy.yaml` describes.
 

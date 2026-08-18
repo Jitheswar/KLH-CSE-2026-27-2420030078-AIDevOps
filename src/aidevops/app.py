@@ -9,6 +9,7 @@ from __future__ import annotations
 
 import asyncio
 import contextlib
+import logging
 import sqlite3
 import threading
 from collections.abc import AsyncIterator
@@ -16,6 +17,7 @@ from contextlib import asynccontextmanager
 from dataclasses import dataclass
 from datetime import datetime
 from pathlib import Path
+from typing import TYPE_CHECKING
 
 from fastapi import FastAPI, HTTPException, Request
 from fastapi.responses import HTMLResponse, RedirectResponse
@@ -30,19 +32,24 @@ from aidevops.detection import (
     store_exposure_signal,
     workload_has_active_exposure_signal,
 )
+from aidevops.domain import METRIC_NAMES
 from aidevops.ports.cluster_inventory import ClusterInventoryPort
 from aidevops.ports.image_scanner import ImageScannerPort
 from aidevops.ports.telemetry import TelemetryPort
 from aidevops.ports.threat_intel import ThreatIntelPort
 from aidevops.ports.triage_model import TriageModelPort
 from aidevops.queue import get_queue_rows, has_pending_scans
-from aidevops.reconcile import reconcile_workloads, release_scan_claim, scan_pending_images, store_scan_result
-from aidevops.triage import enrich_with_threat_intel, fetch_pending_triage_candidates, run_triage_model, store_triage_outcomes
-from aidevops.workload_detail import get_workload_pods, get_workload_telemetry_and_baseline, scaled_band
+from aidevops.reconcile import reconcile_workloads, release_scan_claim, run_triage_sequence, scan_pending_images, store_scan_result
+from aidevops.workload_detail import get_workload_summary, get_workload_telemetry_and_baseline, scaled_band
+
+if TYPE_CHECKING:
+    from aidevops.domain import Vulnerability
+
+logger = logging.getLogger(__name__)
 
 TEMPLATES_DIR = Path(__file__).parent / "templates"
 DEFAULT_INVENTORY_PERIOD_SECONDS = 60.0
-DEFAULT_DETECTION_PERIOD_SECONDS = 60.0
+DEFAULT_DETECTION_PERIOD_SECONDS = 30.0
 
 
 @dataclass(frozen=True)
@@ -77,7 +84,7 @@ def _locked_reconcile(connection: sqlite3.Connection, ports: Ports, db_lock: thr
     # it. Each image's result is written and committed on its own, so a
     # scan that finishes early is visible immediately rather than waiting
     # for the slowest one in the batch.
-    def _locked_store(connection: sqlite3.Connection, digest: str, vulnerabilities: list) -> None:
+    def _locked_store(connection: sqlite3.Connection, digest: str, vulnerabilities: list["Vulnerability"]) -> None:
         with db_lock:
             store_scan_result(connection, digest, vulnerabilities)
 
@@ -98,16 +105,9 @@ def _locked_reconcile(connection: sqlite3.Connection, ports: Ports, db_lock: thr
     with db_lock:
         store_candidate_set(connection, candidates)
 
-    # A real Triage call is a DeepSeek request per Vulnerability - same
-    # reasoning as scanning above, it must not run with db_lock held.
-    # Fetching which candidates still need it, and storing the result, are
-    # both quick SQL steps and do need the lock.
-    with db_lock:
-        triage_candidates = fetch_pending_triage_candidates(connection)
-    triage_candidates = enrich_with_threat_intel(triage_candidates, ports.threat_intel)
-    outcomes = run_triage_model(ports.triage_model, triage_candidates)
-    with db_lock:
-        store_triage_outcomes(connection, outcomes)
+    # Triages every Candidate Set member still missing one - see
+    # aidevops.reconcile.run_triage_sequence for the locking split.
+    run_triage_sequence(connection, ports, db_lock=db_lock)
 
 
 async def _detection_loop(
@@ -133,6 +133,7 @@ def _locked_detect(connection: sqlite3.Connection, ports: Ports, db_lock: thread
     for workload in known_workloads:
         signal = detect_signal_for_workload(ports, workload.pod_names, now)
         if signal is None:
+            logger.warning("telemetry unavailable for workload %s/%s, skipping detection", workload.namespace, workload.name)
             continue
         with db_lock:
             transitioned = store_exposure_signal(
@@ -141,16 +142,10 @@ def _locked_detect(connection: sqlite3.Connection, ports: Ports, db_lock: thread
 
         # A fire or clear transition re-Triages this Workload's
         # Vulnerabilities right now, in this same detection pass - not
-        # deferred to the next inventory loop tick - same locked/unlocked
-        # split as the Triage steps in _locked_reconcile, scoped to this
-        # one Workload (see aidevops.reconcile.retriage_workload).
+        # deferred to the next inventory loop tick - scoped to this one
+        # Workload via run_triage_sequence's workload_id parameter.
         if transitioned:
-            with db_lock:
-                triage_candidates = fetch_pending_triage_candidates(connection, workload_id=workload.id)
-            triage_candidates = enrich_with_threat_intel(triage_candidates, ports.threat_intel)
-            outcomes = run_triage_model(ports.triage_model, triage_candidates)
-            with db_lock:
-                store_triage_outcomes(connection, outcomes)
+            run_triage_sequence(connection, ports, db_lock=db_lock, workload_id=workload.id)
 
 
 def create_app(
@@ -215,9 +210,10 @@ def create_app(
     @app.get("/workloads/{namespace}/{name}", response_class=HTMLResponse)
     def workload_detail(namespace: str, name: str, request: Request) -> HTMLResponse:
         with db_lock:
-            pod_names = get_workload_pods(connection, namespace, name)
-        if pod_names is None:
+            workload = get_workload_summary(connection, namespace, name)
+        if workload is None:
             raise HTTPException(status_code=404, detail="Workload not found")
+        pod_names = workload.pod_names
 
         # Real Prometheus queries are network calls, same reasoning as the
         # cluster inventory call above - they happen with no lock held. One
@@ -229,6 +225,7 @@ def create_app(
         with db_lock:
             exposure_signal_active = workload_has_active_exposure_signal(connection, namespace, name)
             signal_window = get_workload_exposure_signal_window(connection, namespace, name)
+            vulnerabilities = get_queue_rows(connection, workload_id=workload.id)
 
         charts = None
         if telemetry.available:
@@ -241,7 +238,7 @@ def create_app(
                     window_start=signal_window.window_start,
                     fired_at=signal_window.fired_at,
                 )
-                for metric in ("cpu", "network_transmit", "network_receive")
+                for metric in METRIC_NAMES
             }
 
         return templates.TemplateResponse(
@@ -254,6 +251,8 @@ def create_app(
                 "charts": charts,
                 "baseline_establishing": baseline is not None and not baseline.established,
                 "exposure_signal_active": exposure_signal_active,
+                "externally_reachable": workload.externally_reachable,
+                "vulnerabilities": vulnerabilities,
             },
         )
 

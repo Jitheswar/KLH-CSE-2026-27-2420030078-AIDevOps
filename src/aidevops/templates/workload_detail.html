@@ -31,7 +31,52 @@
             color: var(--muted);
         }
 
+        .reachability-badge {
+            display: inline-block;
+            margin: 0.4rem 0;
+            padding: 0.2em 0.7em;
+            border-radius: 0.35em;
+            font-size: 0.85rem;
+            font-weight: 600;
+        }
+        .reachability-badge.reachable { background: var(--warn-bg); color: var(--warn); }
+        .reachability-badge.internal { background: var(--row-alt, #f2f2f2); color: var(--muted); }
+
         section { margin-bottom: 1.6rem; }
+
+        table.vulnerabilities {
+            width: 100%;
+            border-collapse: collapse;
+        }
+        table.vulnerabilities th {
+            text-align: left;
+            font-size: 0.8rem;
+            text-transform: uppercase;
+            letter-spacing: 0.05em;
+            color: var(--muted);
+            border-bottom: 2px solid var(--line);
+            padding: 0.5em 0.7em;
+        }
+        table.vulnerabilities td {
+            padding: 0.6em 0.7em;
+            vertical-align: top;
+            border-bottom: 1px solid var(--line);
+        }
+        table.vulnerabilities .cve-id {
+            font-weight: 700;
+            font-variant-numeric: tabular-nums;
+        }
+        table.vulnerabilities .rationale {
+            color: #333;
+            font-size: 0.9rem;
+        }
+        .triage-issue {
+            display: inline-block;
+            font-size: 0.85rem;
+            font-style: italic;
+        }
+        .triage-issue.triage-failed { color: var(--danger); font-weight: 600; }
+        .triage-issue.triage-missing { color: var(--warn); }
         .telemetry-chart {
             width: 100%;
             height: auto;
@@ -71,6 +116,11 @@
     {% if exposure_signal_active %}
     <p id="exposure-signal" class="exposure-signal-badge">&#9888; Exposure Signal active</p>
     {% endif %}
+    {% if externally_reachable %}
+    <p id="reachability" class="reachability-badge reachable">Externally reachable</p>
+    {% else %}
+    <p id="reachability" class="reachability-badge internal">Not externally reachable</p>
+    {% endif %}
     {% if telemetry_available %}
     {% if baseline_establishing %}
     <p id="baseline-establishing" class="notice-warn">Still establishing a Baseline for this Workload.</p>
@@ -97,5 +147,40 @@
     {% else %}
     <p id="telemetry-unavailable" class="notice-muted">Telemetry is temporarily unavailable.</p>
     {% endif %}
+    <section>
+        <h2>Vulnerabilities</h2>
+        {% if vulnerabilities %}
+        <table class="vulnerabilities">
+            <thead>
+                <tr>
+                    <th>CVE</th>
+                    <th>Severity</th>
+                    <th>Contextual Priority</th>
+                    <th>Rationale</th>
+                </tr>
+            </thead>
+            <tbody>
+                {% for vulnerability in vulnerabilities %}
+                <tr>
+                    <td class="cve-id">{{ vulnerability.cve_id }}</td>
+                    <td>{{ vulnerability.severity | upper }}</td>
+                    <td>{{ vulnerability.contextual_priority }}</td>
+                    <td class="rationale">
+                        {% if vulnerability.triage_failed %}
+                        <span class="triage-issue triage-failed">&#9888; Triage unavailable - showing base score.</span>
+                        {% elif vulnerability.rationale %}
+                        {{ vulnerability.rationale }}
+                        {% else %}
+                        <span class="triage-issue triage-missing">Not yet triaged - showing base score.</span>
+                        {% endif %}
+                    </td>
+                </tr>
+                {% endfor %}
+            </tbody>
+        </table>
+        {% else %}
+        <p id="no-vulnerabilities" class="notice-muted">No Vulnerabilities on this Workload's Candidate Set.</p>
+        {% endif %}
+    </section>
 </body>
 </html>

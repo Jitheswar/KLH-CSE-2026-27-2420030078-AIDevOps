@@ -1,7 +1,8 @@
 # Plain Prometheus scraping the kubelet's cAdvisor endpoint on every node,
 # at the 15 second resolution the spec asks for. No node-exporter, no
-# kube-state-metrics, no Alertmanager, no Grafana - see ticket 07's
-# port-boundary decision to keep this the platform's only telemetry source.
+# kube-state-metrics, no Alertmanager, no Grafana - the platform's interface
+# is the deliverable, so this stays the platform's only telemetry source
+# rather than growing into an observability stack of its own.
 apiVersion: v1
 kind: ConfigMap
 metadata:

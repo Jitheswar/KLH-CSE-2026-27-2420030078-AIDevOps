@@ -1,6 +1,6 @@
 # Builds the same platform `make run` runs on the host - see
 # aidevops.main's module docstring - into an image `make platform-build`
-# loads straight into the kind cluster. See ticket 13.
+# loads straight into the kind cluster.
 #
 # The image keeps the repo's own src/ -> data/ layout (rather than
 # installing aidevops as a wheel into site-packages) because
@@ -12,13 +12,15 @@ FROM python:3.14-slim
 
 # Trivy needs to be a real binary on PATH: RealImageScanner shells out to
 # `trivy image` per aidevops.ports.image_scanner, the same way it does on
-# the host - see scripts/ensure-tools.sh for the version this pins to.
-ARG TRIVY_VERSION=v0.74.0
+# the host. Pinned version lives in .trivy-version, the same file
+# scripts/ensure-tools.sh reads, so the two never drift apart.
+COPY .trivy-version .trivy-version
 RUN apt-get update \
     && apt-get install -y --no-install-recommends ca-certificates curl \
     && rm -rf /var/lib/apt/lists/* \
     && curl -fsSL https://raw.githubusercontent.com/aquasecurity/trivy/main/contrib/install.sh \
-        | sh -s -- -b /usr/local/bin "$TRIVY_VERSION"
+        | sh -s -- -b /usr/local/bin "$(cat .trivy-version)" \
+    && rm .trivy-version
 
 COPY --from=ghcr.io/astral-sh/uv:0.9.7 /uv /usr/local/bin/uv
 

@@ -1,12 +1,12 @@
 """Runs the Triage model over the Candidate Set and caches the result.
 
 One model call per Vulnerability, not batched - see the spec: batching
-would key the cache on a whole batch, which would break the surgical
-re-Triage a later ticket depends on. Split into a locked fetch, an unlocked
-run against the model port, and a locked store - the same shape
-aidevops.reconcile and aidevops.app use for scanning, because a real model
-call is a network request and must not happen while the caller's db_lock
-(see aidevops.app) is held.
+would key the cache on a whole batch, which would break signal-driven
+re-Triage (see aidevops.reconcile.retriage_workload). Split into a locked
+fetch, an unlocked run against the model port, and a locked store - the
+same shape aidevops.reconcile and aidevops.app use for scanning, because a
+real model call is a network request and must not happen while the
+caller's db_lock (see aidevops.app) is held.
 """
 
 from __future__ import annotations
@@ -229,11 +229,12 @@ def _triage_one(candidate: _TriageCandidate, triage_model: TriageModelPort) -> _
         # base score standing and marks the row as such, so a fallback
         # ranking is never read as a considered one. Catching broadly
         # here (not just TriageUnavailable) matters as much as the spec
-        # requirement itself: run_triage_model claims each candidate's row
-        # before calling this, and only releases the claim once its outcome
-        # comes back through store_triage_outcomes - an exception escaping
-        # executor.map instead would abandon that claim forever, since
-        # nothing else ever clears it (see `_claim` and `blocked` above).
+        # requirement itself: fetch_pending_triage_candidates claims each
+        # candidate's row before run_triage_model is ever called, and only
+        # releases the claim once its outcome comes back through
+        # store_triage_outcomes - an exception escaping executor.map instead
+        # would abandon that claim forever, since nothing else ever clears
+        # it (see `_claim` and `blocked` above).
         logger.exception("triage failed for %s, base score stands", cve_id)
         return _TriageOutcome(
             cve_id=cve_id,

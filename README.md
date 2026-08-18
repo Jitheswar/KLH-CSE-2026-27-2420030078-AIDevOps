@@ -35,11 +35,14 @@ The deliverable is a single Python service (FastAPI, SQLite, server-rendered HTM
 
 - `/src` - Source code.
 - `/docs` - Design documents, diagrams, and reference material.
-- `/data` - Datasets used by the project, or a reference to where the data is hosted if it is not stored in this repository. See `data/README.md`.
+- `/data` - Datasets used by the project, or a reference to where the data is hosted if it is not stored in this repository.
+  See `data/README.md`.
 - `/results` - Generated outputs, metrics, and experiment results.
 - `/reports` - Written reports and submission documents.
-- `/deploy` - Kubernetes manifests for the local kind cluster: cluster config, ingress-nginx wiring, the seeded Workloads, Prometheus, and the platform's own in-cluster deployment (`deploy/platform/`). See `make cluster-up`, `make seed`, `make prometheus-up`, and `make platform-deploy` / `make platform-down`.
-- `/scenarios` - Scripted, reproducible compromise simulations used to exercise detection. Deliberately not part of the platform; see `scenarios/README.md` and `docs/adr/0006-attack-simulation-stays-outside-the-platform.md`.
+- `/deploy` - Kubernetes manifests for the local kind cluster: cluster config, ingress-nginx wiring, the seeded Workloads, Prometheus, and the platform's own in-cluster deployment (`deploy/platform/`).
+  See `make cluster-up`, `make seed`, `make prometheus-up`, and `make platform-deploy` / `make platform-down`.
+- `/scenarios` - Scripted, reproducible compromise simulations used to exercise detection.
+  Deliberately not part of the platform; see `scenarios/README.md` and `docs/adr/0006-attack-simulation-stays-outside-the-platform.md`.
 
 ## Setup and Execution Instructions
 
@@ -62,11 +65,16 @@ Copy it before running anything that needs it:
 cp .env.example .env
 ```
 
-- `DATABASE_PATH` - path to the SQLite file. Optional; defaults to `aidevops.db` in the repository root when unset.
-- `INVENTORY_PERIOD_SECONDS` - seconds between automatic inventory-and-scan reconciliations. Optional; defaults to `60`.
-- `PROMETHEUS_URL` - base URL of the Prometheus instance from `make prometheus-up`. Optional on the host; defaults to `http://localhost:9090`, which matches the port `deploy/kind/kind-config.yaml` maps out of the kind node.
-- `DEEPSEEK_API_KEY` - API key for DeepSeek, used by the Triage model port. Required for the model to actually score anything; the platform still runs and serves the queue without it, with every row's Triage recorded as failed/unavailable rather than considered (see `docs/adr/0004-contextual-priority-is-bounded-llm-adjustment.md`).
-- `DEEPSEEK_BASE_URL` - base URL of the DeepSeek API. Optional; defaults to `https://api.deepseek.com`.
+- `DATABASE_PATH` - path to the SQLite file.
+  Optional; defaults to `aidevops.db` in the repository root when unset.
+- `INVENTORY_PERIOD_SECONDS` - seconds between automatic inventory-and-scan reconciliations.
+  Optional; defaults to `60`.
+- `PROMETHEUS_URL` - base URL of the Prometheus instance from `make prometheus-up`.
+  Optional on the host; defaults to `http://localhost:9090`, which matches the port `deploy/kind/kind-config.yaml` maps out of the kind node.
+- `DEEPSEEK_API_KEY` - API key for DeepSeek, used by the Triage model port.
+  Required for the model to actually score anything; the platform still runs and serves the queue without it, with every row's Triage recorded as failed/unavailable rather than considered (see `docs/adr/0004-contextual-priority-is-bounded-llm-adjustment.md`).
+- `DEEPSEEK_BASE_URL` - base URL of the DeepSeek API.
+  Optional; defaults to `https://api.deepseek.com`.
 
 `.env` is gitignored.
 Never commit it, and never put a real value anywhere else in the repository.

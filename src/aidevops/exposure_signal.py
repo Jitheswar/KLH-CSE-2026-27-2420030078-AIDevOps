@@ -108,7 +108,7 @@ def detect_workload_exposure_signal(
             w
             for pod_windows in windows_by_pod.values()
             for w in pod_windows
-            if training_start <= w.start and w.end <= training_end
+            if training_start <= w.start and w.end < training_end
         ]
         baseline = train_baseline(pooled_training_windows)
 

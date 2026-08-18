@@ -12,9 +12,9 @@ from aidevops.domain import ContainerImage, Workload
 
 # Namespaces that hold cluster machinery rather than seeded Workloads. A
 # Deployment in one of these is never something an operator wants ranked -
-# including "aidevops" itself once it runs in-cluster (see
-# deploy/platform/00-namespace.yaml and ticket 13): the platform is not a
-# Workload it should be scanning and Triaging against itself.
+# including "aidevops" itself when it runs in-cluster (see
+# deploy/platform/00-namespace.yaml): the platform is not a Workload it
+# should be scanning and Triaging against itself.
 _SYSTEM_NAMESPACES = frozenset(
     {
         "kube-system",
@@ -80,7 +80,7 @@ class RealClusterInventory:
     if set, otherwise `~/.kube/config`, which is exactly what `kind create
     cluster` writes and points at - and falls back to the in-cluster
     ServiceAccount config (see deploy/platform/) when neither is present,
-    which is the case running as a Pod. See ticket 13.
+    which is the case running as a Pod.
     """
 
     def __init__(self) -> None:

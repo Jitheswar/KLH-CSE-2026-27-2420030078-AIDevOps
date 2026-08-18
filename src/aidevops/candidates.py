@@ -9,7 +9,7 @@ signal changes the score, which can push a Vulnerability across the cutoff
 regardless of what its Severity is.
 
 Base Contextual Priority is stored on its own in `candidate_priorities`,
-independent of any later model adjustment (a later ticket) - see ADR-0004.
+independent of the model's adjustment (see aidevops.triage) - see ADR-0004.
 """
 
 from __future__ import annotations

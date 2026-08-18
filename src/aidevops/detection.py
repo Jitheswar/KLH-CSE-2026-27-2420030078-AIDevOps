@@ -210,11 +210,6 @@ def run_detection(
             retriage_workload(connection, ports, workload.id)
 
 
-def get_active_exposure_signal_workload_ids(connection: sqlite3.Connection) -> set[int]:
-    rows = connection.execute("SELECT workload_id FROM exposure_signals WHERE active = 1").fetchall()
-    return {row["workload_id"] for row in rows}
-
-
 def workload_has_active_exposure_signal(connection: sqlite3.Connection, namespace: str, name: str) -> bool:
     row = connection.execute(
         """

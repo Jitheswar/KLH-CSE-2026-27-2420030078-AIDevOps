@@ -69,7 +69,8 @@ class RealTriageModel:
 
     One call per Vulnerability, not batched - see the spec's reasoning: a
     batch response can only be cached keyed on the whole batch, which would
-    break the surgical re-Triage a later ticket depends on.
+    break the surgical re-Triage signal-driven re-Triage depends on (see
+    aidevops.reconcile.retriage_workload).
     """
 
     def __init__(

@@ -1,8 +1,7 @@
 """Renders telemetry samples as an inline SVG line chart.
 
 No charting library and no CDN - the platform's interface is the actual
-deliverable (see ticket 07's port-boundary decision to exclude Grafana), so
-it stays self-contained rather than depending on one.
+deliverable, so it stays self-contained rather than depending on one.
 """
 
 from __future__ import annotations
@@ -16,6 +15,9 @@ from aidevops.domain import TelemetrySample
 _WIDTH = 640
 _HEIGHT = 160
 _PADDING = 8
+# Mirrors the `--danger` token in templates/_shared_style.html - kept as a
+# literal here since this module has no access to the page's CSS.
+_DANGER_COLOR = "#b00020"
 
 
 def render_line_chart(
@@ -41,9 +43,11 @@ def render_line_chart(
     def _y(value: float) -> float:
         return _HEIGHT - _PADDING - ((value - minimum) / span) * (_HEIGHT - 2 * _PADDING)
 
+    def _x_for_index(index: float) -> float:
+        return _PADDING + (index / (len(values) - 1)) * (_WIDTH - 2 * _PADDING)
+
     def _point(index: int, value: float) -> str:
-        x = _PADDING + (index / (len(values) - 1)) * (_WIDTH - 2 * _PADDING)
-        return f"{x:.1f},{_y(value):.1f}"
+        return f"{_x_for_index(index):.1f},{_y(value):.1f}"
 
     band_rect = ""
     if band is not None:
@@ -77,7 +81,7 @@ def render_line_chart(
             step = (right - left).total_seconds() or 1.0
             fraction = (timestamp - left).total_seconds() / step
             index = (right_index - 1) + fraction
-        return _PADDING + (index / (len(values) - 1)) * (_WIDTH - 2 * _PADDING)
+        return _x_for_index(index)
 
     trigger_rect = ""
     if window_start is not None and fired_at is not None:
@@ -86,7 +90,7 @@ def render_line_chart(
         trigger_rect = (
             f'<rect class="triggering-window" x="{window_x_start:.1f}" y="{_PADDING}" '
             f'width="{(window_x_end - window_x_start):.1f}" height="{_HEIGHT - 2 * _PADDING}" '
-            'fill="#b00020" fill-opacity="0.12" stroke="none" />'
+            f'fill="{_DANGER_COLOR}" fill-opacity="0.12" stroke="none" />'
         )
 
     fired_marker = ""
@@ -94,7 +98,7 @@ def render_line_chart(
         fired_x = _x(fired_at)
         fired_marker = (
             f'<line class="fired-marker" x1="{fired_x:.1f}" y1="{_PADDING}" x2="{fired_x:.1f}" y2="{_HEIGHT - _PADDING}" '
-            'stroke="#b00020" stroke-width="2" stroke-dasharray="4 3" />'
+            f'stroke="{_DANGER_COLOR}" stroke-width="2" stroke-dasharray="4 3" />'
         )
 
     points = " ".join(_point(index, value) for index, value in enumerate(values))
