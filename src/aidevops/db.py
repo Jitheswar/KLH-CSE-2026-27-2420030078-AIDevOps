@@ -131,6 +131,11 @@ def _migrate(connection: sqlite3.Connection) -> None:
 def connect(database_path: str) -> sqlite3.Connection:
     connection = sqlite3.connect(database_path, check_same_thread=False)
     connection.row_factory = sqlite3.Row
+    # SQLite ignores ON DELETE CASCADE unless foreign key enforcement is
+    # turned on per connection - without this, deleting a Workload leaves
+    # its exposure_signals row behind, and a redeployed Workload that
+    # reuses the freed rowid inherits the stale signal.
+    connection.execute("PRAGMA foreign_keys = ON")
     connection.executescript(SCHEMA)
     connection.commit()
     _migrate(connection)

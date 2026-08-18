@@ -153,9 +153,14 @@ def _fetch_triage_by_cve(connection: sqlite3.Connection) -> dict[str, _TriageInf
     so a row this CVE was cached at before a signal transition is
     transparently skipped in favour of whatever `retriage_workload` (see
     aidevops.detection and aidevops.reconcile) has since written at the new
-    key, without anything needing to delete the stale row. Ordered by
-    image_digest so that if more than one row ever matches for a CVE, the
-    choice of which one wins is at least deterministic.
+    key, without anything needing to delete the stale row.
+
+    Grouped by CVE, then within each group the representative row is
+    whichever one's Workload currently has an active Exposure Signal -
+    same tie-break `fetch_pending_triage_candidates` uses - falling back to
+    the first row in tie-break order when none do, so a CVE spanning a
+    quiet Workload and a just-escalated one always shows the escalated
+    Workload's adjustment rather than whichever image_digest sorts first.
 
     `claimed = 0` excludes a row an in-flight reconcile pass has claimed
     but not yet resolved (see aidevops.triage) - its placeholder
@@ -181,14 +186,18 @@ def _fetch_triage_by_cve(connection: sqlite3.Connection) -> dict[str, _TriageInf
         ORDER BY tr.cve_id, tr.image_digest
         """
     ).fetchall()
-    triage_by_cve: dict[str, _TriageInfo] = {}
+
+    rows_by_cve: dict[str, list[sqlite3.Row]] = {}
     for row in rows:
-        if row["cve_id"] in triage_by_cve:
-            continue
+        rows_by_cve.setdefault(row["cve_id"], []).append(row)
+
+    triage_by_cve: dict[str, _TriageInfo] = {}
+    for cve_id, cve_rows in rows_by_cve.items():
+        row = next((r for r in cve_rows if r["signal_active"]), cve_rows[0])
         current_state = ExposureSignalState(active=bool(row["signal_active"]), magnitude=row["signal_magnitude"])
         if row["exposure_signal_state"] != current_state.cache_key():
             continue
-        triage_by_cve[row["cve_id"]] = _TriageInfo(
+        triage_by_cve[cve_id] = _TriageInfo(
             adjustment=clamp_adjustment(row["adjustment"]), rationale=row["rationale"], failed=bool(row["failed"])
         )
     return triage_by_cve

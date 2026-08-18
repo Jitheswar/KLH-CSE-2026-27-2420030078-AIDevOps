@@ -2,185 +2,331 @@
 <html lang="en">
 <head>
     <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
     <title>{{ namespace }}/{{ name }} - Contextual Priority Platform</title>
     <style>
         {% include "_shared_style.html" %}
-        a.back { color: var(--muted); text-decoration: none; font-weight: 600; }
-        a.back:hover { color: var(--ink); }
-        h1 { font-size: 1.9rem; margin: 0.6rem 0 0.9rem; letter-spacing: -0.01em; }
-        h2 { font-size: 1.15rem; margin: 1.6rem 0 0.4rem; }
 
-        .exposure-signal-badge {
-            gap: 0.4em;
-            padding: 0.35em 0.9em;
-            border-radius: 0.4em;
-            font-size: 1.1rem;
-        }
-
-        .notice-warn {
-            display: inline-block;
-            margin: 0.6rem 0;
-            padding: 0.5em 0.9em;
-            border-radius: 0.4em;
-            background: var(--warn-bg);
-            color: var(--warn);
-            font-weight: 600;
-        }
-        .notice-muted {
-            font-size: 1.1rem;
+        /* --- Workload header --------------------------------------------- */
+        .crumbs {
+            display: flex;
+            align-items: center;
+            gap: 0.5rem;
+            padding: 1.8rem 0 0.7rem;
+            font-size: 0.82rem;
             color: var(--muted);
         }
+        .crumbs a.back { color: var(--muted); text-decoration: none; font-weight: 600; }
+        .crumbs a.back:hover { color: var(--ink); }
+        .crumbs .crumb-sep { opacity: 0.5; }
+        .crumbs .crumb-current { font-family: var(--mono); color: var(--ink-dim); }
 
-        .reachability-badge {
-            display: inline-block;
-            margin: 0.4rem 0;
-            padding: 0.2em 0.7em;
-            border-radius: 0.35em;
-            font-size: 0.85rem;
-            font-weight: 600;
+        .workload-head {
+            padding: 1.4rem 1.5rem;
+            border-radius: var(--radius);
+            border: 1px solid var(--line);
+            background: linear-gradient(180deg, var(--surface-2), var(--surface));
+            box-shadow: var(--shadow);
         }
-        .reachability-badge.reachable { background: var(--warn-bg); color: var(--warn); }
-        .reachability-badge.internal { background: var(--row-alt, #f2f2f2); color: var(--muted); }
-
-        section { margin-bottom: 1.6rem; }
-
-        table.vulnerabilities {
-            width: 100%;
-            border-collapse: collapse;
+        /* A Workload that is signalling right now gets a lit header, the
+           same treatment its row gets on the queue. */
+        .workload-head.signalling {
+            border-color: var(--danger-line);
+            background:
+                radial-gradient(44rem 14rem at 0% 0%, rgba(255, 77, 109, 0.12), transparent 70%),
+                linear-gradient(180deg, var(--surface-2), var(--surface));
         }
-        table.vulnerabilities th {
-            text-align: left;
-            font-size: 0.8rem;
-            text-transform: uppercase;
-            letter-spacing: 0.05em;
-            color: var(--muted);
-            border-bottom: 2px solid var(--line);
-            padding: 0.5em 0.7em;
-        }
-        table.vulnerabilities td {
-            padding: 0.6em 0.7em;
-            vertical-align: top;
-            border-bottom: 1px solid var(--line);
-        }
-        table.vulnerabilities .cve-id {
+        .workload-head h1 {
+            margin: 0;
+            font-family: var(--mono);
+            font-size: clamp(1.5rem, 1.1rem + 1.4vw, 2.1rem);
             font-weight: 700;
-            font-variant-numeric: tabular-nums;
+            letter-spacing: -0.03em;
         }
-        table.vulnerabilities .rationale {
-            color: #333;
-            font-size: 0.9rem;
+        .workload-head h1 .workload-namespace { color: var(--muted); font-weight: 500; }
+        .badge-row {
+            display: flex;
+            align-items: center;
+            gap: 0.55rem;
+            flex-wrap: wrap;
+            margin-top: 0.9rem;
         }
-        .triage-issue {
-            display: inline-block;
-            font-size: 0.85rem;
-            font-style: italic;
+        .exposure-signal-badge {
+            gap: 0.45em;
+            padding: 0.4em 0.95em;
+            border-radius: 999px;
+            font-size: 0.88rem;
         }
-        .triage-issue.triage-failed { color: var(--danger); font-weight: 600; }
-        .triage-issue.triage-missing { color: var(--warn); }
+        .reachability-badge {
+            display: inline-flex;
+            align-items: center;
+            gap: 0.45em;
+            padding: 0.36em 0.85em;
+            border-radius: 999px;
+            font-size: 0.82rem;
+            font-weight: 600;
+            border: 1px solid currentColor;
+            background: color-mix(in srgb, currentColor 11%, transparent);
+        }
+        .reachability-badge::before {
+            content: "";
+            width: 0.45em;
+            height: 0.45em;
+            border-radius: 50%;
+            background: currentColor;
+            box-shadow: 0 0 0.5em currentColor;
+        }
+        .reachability-badge.reachable { color: var(--warn); }
+        .reachability-badge.internal { color: var(--muted); }
+
+        /* --- Telemetry ---------------------------------------------------- */
+        /* One chart per row: every chart then renders at the same width,
+           which is what keeps the SVG's own labels at a readable size -
+           see aidevops.charts. */
+        .charts { display: flex; flex-direction: column; gap: 1rem; }
+        .chart-card {
+            padding: 1.1rem 1.15rem 0.9rem;
+            border-radius: var(--radius);
+            border: 1px solid var(--line);
+            background: linear-gradient(180deg, var(--surface-2), var(--surface));
+            box-shadow: var(--shadow);
+        }
+        .chart-card h2 {
+            display: flex;
+            align-items: center;
+            gap: 0.55rem;
+            margin: 0 0 0.7rem;
+            font-size: 0.78rem;
+            font-weight: 700;
+            letter-spacing: 0.12em;
+            text-transform: uppercase;
+            color: var(--muted);
+        }
+        .chart-card h2::before {
+            content: "";
+            width: 0.55em;
+            height: 0.55em;
+            border-radius: 2px;
+            background: var(--metric, var(--accent));
+            box-shadow: 0 0 0.6em var(--metric, var(--accent));
+        }
         .telemetry-chart {
+            display: block;
             width: 100%;
             height: auto;
-            max-width: 900px;
-            color: #1f6feb;
-            background: #fafbfc;
-            border: 1px solid var(--line);
-            border-radius: 0.4em;
+            color: var(--metric, var(--accent));
+            overflow: visible;
         }
         .chart-legend {
             display: flex;
             flex-wrap: wrap;
-            gap: 1.2rem;
-            margin-top: 0.4rem;
-            font-size: 0.85rem;
+            gap: 1rem;
+            margin: 0.75rem 0 0;
+            padding-top: 0.7rem;
+            border-top: 1px solid var(--line);
+            font-size: 0.78rem;
             color: var(--muted);
         }
         .chart-legend .swatch {
             display: inline-block;
-            width: 0.9em;
-            height: 0.9em;
-            margin-right: 0.4em;
-            vertical-align: middle;
-            border-radius: 0.15em;
+            width: 0.85em;
+            height: 0.85em;
+            margin-right: 0.45em;
+            vertical-align: -0.08em;
+            border-radius: 0.2em;
         }
-        .chart-legend .swatch.baseline-swatch { background: #1f6feb; opacity: 0.15; }
-        .chart-legend .swatch.trigger-swatch { background: var(--danger); opacity: 0.12; }
+        .chart-legend .swatch.baseline-swatch {
+            background: color-mix(in srgb, var(--metric, var(--accent)) 25%, transparent);
+            border: 1px dashed color-mix(in srgb, var(--metric, var(--accent)) 60%, transparent);
+        }
+        .chart-legend .swatch.trigger-swatch { background: rgba(255, 77, 109, 0.22); }
         .chart-legend .swatch.fired-swatch {
-            background: repeating-linear-gradient(to bottom, var(--danger) 0 4px, transparent 4px 7px);
-            opacity: 1;
+            background: repeating-linear-gradient(to bottom, var(--danger) 0 3px, transparent 3px 6px);
+            border-radius: 0;
+            width: 0.3em;
+            margin-left: 0.27em;
+            margin-right: 0.72em;
+        }
+
+        /* --- Vulnerabilities on this Workload ----------------------------- */
+        .vuln-list { display: flex; flex-direction: column; gap: 0.6rem; }
+        .vuln-row {
+            display: grid;
+            grid-template-columns: 3.6rem minmax(0, 1fr);
+            gap: 1.1rem;
+            align-items: start;
+            padding: 0.95rem 1.15rem;
+            border-radius: var(--radius);
+            border: 1px solid var(--line);
+            background: linear-gradient(180deg, var(--surface-2), var(--surface));
+        }
+        .vuln-row:hover { border-color: var(--line-strong); }
+        .vuln-score {
+            display: flex;
+            flex-direction: column;
+            align-items: center;
+            gap: 0.1rem;
+            padding: 0.35rem 0;
+            border-radius: var(--radius-sm);
+            background: color-mix(in srgb, var(--band) 12%, transparent);
+            border: 1px solid color-mix(in srgb, var(--band) 45%, transparent);
+        }
+        .vuln-score .score-value {
+            font-family: var(--mono);
+            font-size: 1.15rem;
+            font-weight: 700;
+            color: var(--band);
+            line-height: 1.1;
+        }
+        .vuln-score .score-label {
+            font-size: 0.54rem;
+            font-weight: 700;
+            letter-spacing: 0.12em;
+            color: var(--muted);
+        }
+        .vuln-headline {
+            display: flex;
+            align-items: center;
+            gap: 0.55rem;
+            flex-wrap: wrap;
+            margin-bottom: 0.35rem;
+        }
+        .vuln-row .cve-id {
+            font-family: var(--mono);
+            font-size: 0.98rem;
+            font-weight: 700;
+        }
+        .vuln-row .rationale {
+            margin: 0;
+            color: var(--ink-dim);
+            font-size: 0.9rem;
+            line-height: 1.55;
+        }
+        .triage-issue {
+            display: inline-flex;
+            align-items: center;
+            gap: 0.45em;
+            font-size: 0.85rem;
+            font-weight: 600;
+            padding: 0.28em 0.65em;
+            border-radius: var(--radius-sm);
+            border: 1px solid currentColor;
+            background: color-mix(in srgb, currentColor 10%, transparent);
+        }
+        .triage-issue.triage-failed { color: var(--danger); }
+        .triage-issue.triage-missing { color: var(--warn); }
+
+        .panel-note { margin: 0; }
+
+        @media (max-width: 620px) {
+            .vuln-row { grid-template-columns: minmax(0, 1fr); gap: 0.7rem; }
+            .vuln-score { flex-direction: row; gap: 0.5rem; justify-content: center; align-items: baseline; }
         }
     </style>
 </head>
 <body>
-    <p><a class="back" href="/">&larr; Back to queue</a></p>
-    <h1>{{ namespace }}/{{ name }}</h1>
-    {% if exposure_signal_active %}
-    <p id="exposure-signal" class="exposure-signal-badge">&#9888; Exposure Signal active</p>
-    {% endif %}
-    {% if externally_reachable %}
-    <p id="reachability" class="reachability-badge reachable">Externally reachable</p>
-    {% else %}
-    <p id="reachability" class="reachability-badge internal">Not externally reachable</p>
-    {% endif %}
-    {% if telemetry_available %}
-    {% if baseline_establishing %}
-    <p id="baseline-establishing" class="notice-warn">Still establishing a Baseline for this Workload.</p>
-    {% endif %}
-    <section>
-        <h2>CPU</h2>
-        {{ charts.cpu | safe }}
-        {% if exposure_signal_active %}
-        <p class="chart-legend">
-            <span><span class="swatch baseline-swatch"></span>Baseline band</span>
-            <span><span class="swatch trigger-swatch"></span>Triggering window</span>
-            <span><span class="swatch fired-swatch"></span>Signal fired</span>
+    <header class="masthead">
+        <div class="shell masthead-inner">
+            <a class="brand" href="/">
+                <span class="brand-mark" aria-hidden="true"></span>
+                <span class="brand-text">
+                    <span class="brand-name">Contextual Priority Platform</span>
+                    <span class="brand-tag">Vulnerabilities ranked by what the cluster is doing now</span>
+                </span>
+            </a>
+            <a class="btn" href="/"><span class="btn-glyph" aria-hidden="true">&#8592;</span>Back to queue</a>
+        </div>
+    </header>
+
+    <main class="shell">
+        <nav class="crumbs" aria-label="Breadcrumb">
+            <a class="back" href="/">Queue</a>
+            <span class="crumb-sep" aria-hidden="true">/</span>
+            <span class="crumb-current">{{ namespace }}</span>
+        </nav>
+
+        <div class="workload-head{% if exposure_signal_active %} signalling{% endif %}">
+            <h1><span class="workload-namespace">{{ namespace }}/</span>{{ name }}</h1>
+            <div class="badge-row">
+                {% if exposure_signal_active %}
+                <span id="exposure-signal" class="exposure-signal-badge">&#9888; Exposure Signal active</span>
+                {% endif %}
+                {% if externally_reachable %}
+                <span id="reachability" class="reachability-badge reachable">Externally reachable</span>
+                {% else %}
+                <span id="reachability" class="reachability-badge internal">Not externally reachable</span>
+                {% endif %}
+                {% if baseline_establishing %}
+                <span id="baseline-establishing" class="reachability-badge" style="color: var(--accent);">Still establishing a Baseline</span>
+                {% endif %}
+            </div>
+        </div>
+
+        <h2 class="section-title">Runtime telemetry</h2>
+        {% if telemetry_available %}
+        <div class="charts">
+            {# CPU carries the Exposure Signal's own annotations, so it gets
+               the full width and the legend that explains them. #}
+            <section class="chart-card" style="--metric: #5b8cff;">
+                <h2>CPU</h2>
+                {{ charts.cpu | safe }}
+                {% if exposure_signal_active %}
+                <p class="chart-legend">
+                    <span><span class="swatch baseline-swatch"></span>Baseline band</span>
+                    <span><span class="swatch trigger-swatch"></span>Triggering window</span>
+                    <span><span class="swatch fired-swatch"></span>Signal fired</span>
+                </p>
+                {% else %}
+                <p class="chart-legend"><span><span class="swatch baseline-swatch"></span>Baseline band</span></p>
+                {% endif %}
+            </section>
+            <section class="chart-card" style="--metric: #22d3ee;">
+                <h2>Network transmit</h2>
+                {{ charts.network_transmit | safe }}
+            </section>
+            <section class="chart-card" style="--metric: #a78bfa;">
+                <h2>Network receive</h2>
+                {{ charts.network_receive | safe }}
+            </section>
+        </div>
+        {% else %}
+        <p id="telemetry-unavailable" class="notice notice-muted panel-note">
+            Telemetry is temporarily unavailable. Detection resumes on its own once it returns - nothing on this page is stale by more than one collection interval.
         </p>
         {% endif %}
-    </section>
-    <section>
-        <h2>Network transmit</h2>
-        {{ charts.network_transmit | safe }}
-    </section>
-    <section>
-        <h2>Network receive</h2>
-        {{ charts.network_receive | safe }}
-    </section>
-    {% else %}
-    <p id="telemetry-unavailable" class="notice-muted">Telemetry is temporarily unavailable.</p>
-    {% endif %}
-    <section>
-        <h2>Vulnerabilities</h2>
+
+        <h2 class="section-title">Vulnerabilities <span>{{ vulnerabilities | length }}</span></h2>
         {% if vulnerabilities %}
-        <table class="vulnerabilities">
-            <thead>
-                <tr>
-                    <th>CVE</th>
-                    <th>Severity</th>
-                    <th>Contextual Priority</th>
-                    <th>Rationale</th>
-                </tr>
-            </thead>
-            <tbody>
-                {% for vulnerability in vulnerabilities %}
-                <tr>
-                    <td class="cve-id">{{ vulnerability.cve_id }}</td>
-                    <td>{{ vulnerability.severity | upper }}</td>
-                    <td>{{ vulnerability.contextual_priority }}</td>
-                    <td class="rationale">
-                        {% if vulnerability.triage_failed %}
-                        <span class="triage-issue triage-failed">&#9888; Triage unavailable - showing base score.</span>
-                        {% elif vulnerability.rationale %}
-                        {{ vulnerability.rationale }}
-                        {% else %}
-                        <span class="triage-issue triage-missing">Not yet triaged - showing base score.</span>
-                        {% endif %}
-                    </td>
-                </tr>
-                {% endfor %}
-            </tbody>
-        </table>
+        <div class="vuln-list">
+            {% for vulnerability in vulnerabilities %}
+            {% if vulnerability.contextual_priority >= 80 %}{% set band = "var(--sev-critical)" %}
+            {% elif vulnerability.contextual_priority >= 60 %}{% set band = "var(--sev-high)" %}
+            {% elif vulnerability.contextual_priority >= 40 %}{% set band = "var(--sev-medium)" %}
+            {% else %}{% set band = "var(--sev-low)" %}{% endif %}
+            <article class="vuln-row" style="--band: {{ band }};">
+                <div class="vuln-score" title="Contextual Priority {{ vulnerability.contextual_priority }} out of 100">
+                    <span class="score-value">{{ vulnerability.contextual_priority }}</span>
+                    <span class="score-label">CP</span>
+                </div>
+                <div>
+                    <div class="vuln-headline">
+                        <span class="cve-id">{{ vulnerability.cve_id }}</span>
+                        <span class="severity-pill {{ vulnerability.severity | upper }}">{{ vulnerability.severity | upper }}</span>
+                    </div>
+                    {% if vulnerability.triage_failed %}
+                    <span class="triage-issue triage-failed"><span aria-hidden="true">&#9888;</span>Triage unavailable - showing base score.</span>
+                    {% elif vulnerability.rationale %}
+                    <p class="rationale">{{ vulnerability.rationale }}</p>
+                    {% else %}
+                    <span class="triage-issue triage-missing"><span aria-hidden="true">&#8987;</span>Not yet triaged - showing base score.</span>
+                    {% endif %}
+                </div>
+            </article>
+            {% endfor %}
+        </div>
         {% else %}
-        <p id="no-vulnerabilities" class="notice-muted">No Vulnerabilities on this Workload's Candidate Set.</p>
+        <p id="no-vulnerabilities" class="notice notice-muted panel-note">No Vulnerabilities on this Workload's Candidate Set.</p>
         {% endif %}
-    </section>
+    </main>
 </body>
 </html>

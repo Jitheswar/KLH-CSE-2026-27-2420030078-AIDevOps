@@ -14,9 +14,10 @@ independent of the model's adjustment (see aidevops.triage) - see ADR-0004.
 
 from __future__ import annotations
 
+import contextlib
 import sqlite3
 from dataclasses import dataclass
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, ContextManager
 
 if TYPE_CHECKING:
     from aidevops.ports.threat_intel import ThreatIntelPort
@@ -68,7 +69,11 @@ def base_priority(severity: str, epss_score: float, kev_listed: bool, fix_availa
     return round(max(0.0, min(score, 100.0)))
 
 
-def compute_candidate_set(connection: sqlite3.Connection, threat_intel: "ThreatIntelPort") -> None:
+def compute_candidate_set(
+    connection: sqlite3.Connection,
+    threat_intel: "ThreatIntelPort",
+    db_lock: ContextManager[None] = contextlib.nullcontext(),
+) -> None:
     """Dedupes every known Vulnerability by CVE, scores each, and persists
     the top `TARGET_CANDIDATE_SET_SIZE` to `candidate_priorities`.
 
@@ -82,10 +87,16 @@ def compute_candidate_set(connection: sqlite3.Connection, threat_intel: "ThreatI
     (see aidevops.app) only holds it across the two quick SQL steps, not
     across the scoring pass in between - the same shape
     aidevops.reconcile splits scanning out of its own DB-locked steps for.
+
+    `db_lock` brackets only the two SQL steps, same reasoning and default
+    as aidevops.reconcile.run_triage_sequence, so aidevops.app can compose
+    this directly instead of re-implementing the same three-step split.
     """
-    rows = fetch_vulnerability_rows(connection)
+    with db_lock:
+        rows = fetch_vulnerability_rows(connection)
     candidates = score_candidate_set(rows, threat_intel)
-    store_candidate_set(connection, candidates)
+    with db_lock:
+        store_candidate_set(connection, candidates)
 
 
 def fetch_vulnerability_rows(connection: sqlite3.Connection) -> list[sqlite3.Row]:

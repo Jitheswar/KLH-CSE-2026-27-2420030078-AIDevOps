@@ -47,6 +47,7 @@ from aidevops.ports.image_scanner import FakeImageScanner
 from aidevops.ports.telemetry import FakeTelemetry
 from aidevops.ports.threat_intel import FakeThreatIntel
 from aidevops.queue import get_queue_rows
+from aidevops.reconcile import run_triage_sequence
 from aidevops.triage import fetch_pending_triage_candidates
 
 _START = datetime(2024, 1, 1, 12, 0, 0)
@@ -384,4 +385,49 @@ def test_a_cve_shared_with_a_quiet_alphabetically_earlier_workload_is_still_esca
     assert len(candidates) == 1
     assert candidates[0].context.exposure_signal.active is True
     assert candidates[0].context.workload_name == "zzz-firing"
+    connection.close()
+
+
+def test_the_queue_shows_the_escalated_adjustment_for_a_cve_shared_with_a_quiet_alphabetically_earlier_workload() -> None:
+    """The fix above makes `fetch_pending_triage_candidates` pick the
+    firing Workload as the CVE's representative context, and re-Triage
+    stores its escalated result under that Workload's own image digest -
+    but the initial, pre-signal Triage is still sitting in `triage_results`
+    keyed to the quiet Workload's digest too, since nothing deletes it (see
+    aidevops.queue._fetch_triage_by_cve's docstring). `get_queue_rows`
+    (`queue._fetch_triage_by_cve`) has to pick between those two rows for
+    the same CVE on its own read path - this is what proves the queue
+    itself, not just the Triage cache, prefers the escalated one.
+    """
+    quiet = _workload("aaa-quiet")
+    firing = _workload("zzz-firing")
+    shared_cve = _vulnerability("CVE-2024-0009")
+    triage_model = _SignalAwareTriageModel()
+    connection = connect(":memory:")
+    ports = Ports(
+        cluster_inventory=FakeClusterInventory([quiet, firing]),
+        telemetry=FakeTelemetry(),
+        image_scanner=FakeImageScanner(
+            {"sha256:aaa-quiet": [shared_cve], "sha256:zzz-firing": [shared_cve]}
+        ),
+        threat_intel=FakeThreatIntel({shared_cve.cve_id: ThreatIntel(cve_id=shared_cve.cve_id, epss_score=0.2, kev_listed=False)}),
+        triage_model=triage_model,
+    )
+    app = create_app(connection, ports)
+    client = TestClient(app)
+    # First pass: neither Workload has a signal yet, so the quiet Workload
+    # (alphabetically first) is Triaged as the CVE's representative and
+    # stored at sha256:aaa-quiet - the stale row `_fetch_triage_by_cve`
+    # must not prefer once the other Workload fires.
+    client.post("/rescan")
+    firing_workload_id = connection.execute("SELECT id FROM workloads WHERE name = 'zzz-firing'").fetchone()["id"]
+
+    store_exposure_signal(connection, workload_id=firing_workload_id, active=True, magnitude=3.0)
+    run_triage_sequence(connection, ports)
+
+    response = client.get("/")
+
+    assert response.status_code == 200
+    assert "Escalated - active Exposure Signal in this cluster." in response.text
+    assert "Nothing new here." not in response.text
     connection.close()

@@ -9,7 +9,6 @@ from __future__ import annotations
 
 import asyncio
 import contextlib
-import logging
 import sqlite3
 import threading
 from collections.abc import AsyncIterator
@@ -23,13 +22,11 @@ from fastapi import FastAPI, HTTPException, Request
 from fastapi.responses import HTMLResponse, RedirectResponse
 from fastapi.templating import Jinja2Templates
 
-from aidevops.candidates import fetch_vulnerability_rows, score_candidate_set, store_candidate_set
+from aidevops.candidates import compute_candidate_set
 from aidevops.charts import render_line_chart
 from aidevops.detection import (
-    detect_signal_for_workload,
     get_workload_exposure_signal_window,
-    list_workloads_with_pods,
-    store_exposure_signal,
+    run_detection,
     workload_has_active_exposure_signal,
 )
 from aidevops.domain import METRIC_NAMES
@@ -44,8 +41,6 @@ from aidevops.workload_detail import get_workload_summary, get_workload_telemetr
 
 if TYPE_CHECKING:
     from aidevops.domain import Vulnerability
-
-logger = logging.getLogger(__name__)
 
 TEMPLATES_DIR = Path(__file__).parent / "templates"
 DEFAULT_INVENTORY_PERIOD_SECONDS = 60.0
@@ -98,12 +93,9 @@ def _locked_reconcile(connection: sqlite3.Connection, ports: Ports, db_lock: thr
     # loaded at startup, not a network call, but scoring and sorting a
     # thousand-plus Vulnerabilities is still real CPU work - it runs with
     # no lock held, same reasoning as the network calls above. Only the
-    # SQL read and the SQL write around it need db_lock.
-    with db_lock:
-        rows = fetch_vulnerability_rows(connection)
-    candidates = score_candidate_set(rows, ports.threat_intel)
-    with db_lock:
-        store_candidate_set(connection, candidates)
+    # SQL read and the SQL write around it need db_lock - see
+    # aidevops.candidates.compute_candidate_set for the locking split.
+    compute_candidate_set(connection, ports.threat_intel, db_lock=db_lock)
 
     # Triages every Candidate Set member still missing one - see
     # aidevops.reconcile.run_triage_sequence for the locking split.
@@ -123,29 +115,10 @@ def _locked_detect(connection: sqlite3.Connection, ports: Ports, db_lock: thread
     # same reasoning as _locked_reconcile above - it must not run with
     # db_lock held, or every request needing it (the queue page, Workload
     # detail, /rescan, the inventory loop) blocks for however long a
-    # detection pass across every Workload takes. Only the SQL read that
-    # lists known Workloads, and the SQL write per Workload's result, need
-    # the lock - see aidevops.detection's module docstring.
-    with db_lock:
-        known_workloads = list_workloads_with_pods(connection)
-
-    now = datetime.now()
-    for workload in known_workloads:
-        signal = detect_signal_for_workload(ports, workload.pod_names, now)
-        if signal is None:
-            logger.warning("telemetry unavailable for workload %s/%s, skipping detection", workload.namespace, workload.name)
-            continue
-        with db_lock:
-            transitioned = store_exposure_signal(
-                connection, workload.id, signal.active, signal.magnitude, signal.window_start, signal.fired_at
-            )
-
-        # A fire or clear transition re-Triages this Workload's
-        # Vulnerabilities right now, in this same detection pass - not
-        # deferred to the next inventory loop tick - scoped to this one
-        # Workload via run_triage_sequence's workload_id parameter.
-        if transitioned:
-            run_triage_sequence(connection, ports, db_lock=db_lock, workload_id=workload.id)
+    # detection pass across every Workload takes. run_detection's own
+    # `db_lock` parameter brackets only the SQL steps - see
+    # aidevops.detection's module docstring.
+    run_detection(connection, ports, datetime.now(), db_lock=db_lock)
 
 
 def create_app(

@@ -1,22 +1,22 @@
-"""Exposure Signal lifecycle: hysteresis, per-pod max attribution, and the
-Baseline freeze. Pure functions driven with synthetic telemetry, no
-network - same carve-out `test_baseline.py` uses.
+"""Exposure Signal lifecycle: per-pod max attribution and the Baseline
+freeze. Pure functions driven with synthetic telemetry, no network.
 
-The fire-after-2/clear-after-3 hysteresis is tested directly against
-`SignalState`, independent of how "anomalous" gets decided for a given
-window: with the Baseline's window stepped every 30 seconds over a 2 minute
+Per the spec, there is deliberately no unit-test layer beneath Seam A:
+hysteresis counting and the frozen-baseline rule are both reachable by
+pushing a synthetic series through the fake telemetry port, and are
+covered end to end there instead - see test_seam_a_exposure_signal.py.
+
+The one exception is `test_a_single_anomalous_window_surrounded_by_normal_raises_nothing`
+below: with the Baseline's window stepped every 30 seconds over a 2 minute
 span (ADR-0002, ticket 08), any two adjacent windows share 3 of their 4
 samples, so a real spike's very first affected window and the one after it
 are both drawn from an overlapping, highly correlated pair of feature
 vectors - there is no way to manufacture a real telemetry series that trips
-"exactly one anomalous window" without also tripping its neighbour. The
-hysteresis rule itself has no opinion on where "anomalous" comes from, so
-testing it against a synthetic boolean sequence is the correct level, the
-same way `test_baseline.py` tests Baseline classification without needing
-an HTTP surface.
+"exactly one anomalous window" without also tripping its neighbour. That
+boundary is only reachable by driving `SignalState` directly.
 
-The remaining Seam A requirements - per-pod max attribution and the
-training freeze - do need real telemetry through the Baseline, and are
+Per-pod max attribution and the training freeze do need real telemetry
+through the Baseline rather than a synthetic boolean sequence, and are
 covered below with a sustained (many-window) spike rather than a
 single-window one, so the assertion does not ride on the precise boundary
 behaviour above.
@@ -28,7 +28,7 @@ import random
 from datetime import datetime, timedelta
 
 from aidevops.domain import TelemetrySample
-from aidevops.exposure_signal import CLEAR_AFTER, FIRE_AFTER, SignalState, detect_workload_exposure_signal
+from aidevops.exposure_signal import SignalState, detect_workload_exposure_signal
 
 _START = datetime(2024, 1, 1, 12, 0, 0)
 _STEP = timedelta(seconds=30)
@@ -70,15 +70,15 @@ def _quiet_history(pod: str, *, seed: int = _QUIET_SEED, count: int = _QUIET_COU
 
 
 # --- Hysteresis, tested directly against SignalState ---
-
-
-def test_fires_after_two_consecutive_anomalous_windows_not_one() -> None:
-    state = SignalState()
-    state = state.advance(True)
-    assert state.active is False
-
-    state = state.advance(True)
-    assert state.active is True
+#
+# Only this one case lives here rather than at Seam A: per the spec, "a
+# single anomalous window followed by normal ones raises nothing" is a
+# boundary no real telemetry series can isolate - any two adjacent 2
+# minute windows stepped every 30 seconds share 3 of their 4 samples, so a
+# real spike's first affected window and the one after it are always drawn
+# from an overlapping, highly correlated pair of feature vectors. Fires-
+# after-2 and clears-after-3 are exercised end to end instead, through the
+# fake telemetry port - see test_seam_a_exposure_signal.py.
 
 
 def test_a_single_anomalous_window_surrounded_by_normal_raises_nothing() -> None:
@@ -86,20 +86,6 @@ def test_a_single_anomalous_window_surrounded_by_normal_raises_nothing() -> None
     for anomalous in [False, False, True, False, False, False, False]:
         state = state.advance(anomalous)
         assert state.active is False
-
-
-def test_the_signal_persists_for_three_normal_windows_after_recovery() -> None:
-    state = SignalState()
-    for _ in range(FIRE_AFTER):
-        state = state.advance(True)
-    assert state.active is True
-
-    for _ in range(CLEAR_AFTER - 1):
-        state = state.advance(False)
-        assert state.active is True
-
-    state = state.advance(False)
-    assert state.active is False
 
 
 # --- Per-pod max attribution and the training freeze, through real telemetry ---

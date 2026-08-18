@@ -2,279 +2,615 @@
 <html lang="en">
 <head>
     <meta charset="utf-8">
-    <title>Contextual Priority Platform</title>
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <title>Queue - Contextual Priority Platform</title>
     <style>
         {% include "_shared_style.html" %}
-        :root {
-            --row-alt: #f7f8fa;
-            --accent: #1f6feb;
-            --sev-critical: #b00020;
-            --sev-high: #e0631e;
-            --sev-medium: #b98900;
-            --sev-low: #3070b0;
-            --sev-default: #6b7280;
+
+        /* --- Page head -------------------------------------------------- */
+        .page-head { padding: 2.4rem 0 0.4rem; }
+        .page-head h1 {
+            font-size: clamp(2rem, 1.4rem + 1.8vw, 2.9rem);
+            font-weight: 800;
+            letter-spacing: -0.035em;
+            margin: 0 0 0.35rem;
+            background: linear-gradient(100deg, #fff 12%, var(--ink-dim) 62%, var(--accent));
+            -webkit-background-clip: text;
+            background-clip: text;
+            color: transparent;
         }
-        h1 {
-            font-size: 1.9rem;
-            margin: 0 0 0.9rem;
-            letter-spacing: -0.01em;
+        .page-head .lede {
+            margin: 0;
+            max-width: 62ch;
+            color: var(--muted);
+            font-size: 1rem;
         }
+
+        /* --- Stat strip: the queue's shape before any row is read. ------- */
+        .stats {
+            display: grid;
+            grid-template-columns: repeat(auto-fit, minmax(11rem, 1fr));
+            gap: 0.9rem;
+            margin: 1.6rem 0 1.4rem;
+        }
+        .stat {
+            position: relative;
+            padding: 0.95rem 1.1rem;
+            border-radius: var(--radius);
+            background: linear-gradient(180deg, var(--surface-2), var(--surface));
+            border: 1px solid var(--line);
+            overflow: hidden;
+        }
+        .stat::before {
+            content: "";
+            position: absolute;
+            inset: 0 0 auto 0;
+            height: 2px;
+            background: var(--stat-accent, var(--accent));
+            opacity: 0.85;
+        }
+        .stat-value {
+            font-family: var(--mono);
+            font-size: 1.85rem;
+            font-weight: 700;
+            line-height: 1.1;
+            letter-spacing: -0.02em;
+            color: var(--stat-accent, var(--ink));
+        }
+        .stat-label {
+            margin-top: 0.15rem;
+            font-size: 0.76rem;
+            font-weight: 600;
+            letter-spacing: 0.06em;
+            text-transform: uppercase;
+            color: var(--muted);
+        }
+        .stat-note { font-size: 0.78rem; color: var(--muted); opacity: 0.85; }
+
+        /* --- Toolbar ----------------------------------------------------- */
         .toolbar {
             display: flex;
             align-items: center;
-            gap: 1rem;
+            gap: 0.75rem;
             flex-wrap: wrap;
-            margin-bottom: 1.1rem;
-        }
-        button {
-            font-size: 1rem;
-            padding: 0.5em 1.1em;
-            border-radius: 0.4em;
+            padding: 0.75rem 0.9rem;
+            border-radius: 999px;
             border: 1px solid var(--line);
-            background: var(--paper);
-            cursor: pointer;
+            background: color-mix(in srgb, var(--surface-2) 80%, transparent);
+            margin-bottom: 1.4rem;
         }
-        button:hover { border-color: var(--accent); color: var(--accent); }
+        .toolbar form { display: contents; }
 
-        /* --- Model-adjustment toggle: a real switch, not a text link. --- */
+        .filter {
+            position: relative;
+            flex: 1 1 16rem;
+            min-width: 12rem;
+        }
+        .filter input {
+            width: 100%;
+            font: inherit;
+            font-size: 0.9rem;
+            color: var(--ink);
+            padding: 0.55em 2.6em 0.55em 2.3em;
+            border-radius: 999px;
+            border: 1px solid var(--line-strong);
+            background: var(--bg);
+        }
+        .filter input::placeholder { color: var(--muted); }
+        .filter input:focus { border-color: var(--accent-line); outline: none; }
+        .filter .filter-glyph {
+            position: absolute;
+            left: 0.85em;
+            top: 50%;
+            transform: translateY(-50%);
+            color: var(--muted);
+            font-size: 0.9rem;
+            pointer-events: none;
+        }
+        .filter kbd {
+            position: absolute;
+            right: 0.6em;
+            top: 50%;
+            transform: translateY(-50%);
+            font-family: var(--mono);
+            font-size: 0.68rem;
+            color: var(--muted);
+            border: 1px solid var(--line-strong);
+            border-radius: 5px;
+            padding: 0.05em 0.4em;
+        }
+
+        /* The model-adjustment toggle: a real switch, not a text link. */
         .toggle {
             display: inline-flex;
             align-items: center;
-            gap: 0.6em;
-            padding: 0.35em 0.9em 0.35em 0.5em;
+            gap: 0.55em;
+            margin: 0;
+            padding: 0.25em 0.9em 0.25em 0.35em;
             border-radius: 999px;
-            border: 1px solid var(--line);
-            background: var(--row-alt);
+            border: 1px solid var(--line-strong);
+            background: var(--surface);
+            font-size: 0.85rem;
         }
         .toggle a.switch {
             display: inline-block;
-            width: 2.6em;
-            height: 1.5em;
+            width: 2.5em;
+            height: 1.45em;
             border-radius: 999px;
             position: relative;
             text-decoration: none;
             flex: none;
+            transition: background 0.18s ease;
         }
-        .toggle a.switch.on { background: var(--accent); }
-        .toggle a.switch.off { background: #b7bcc6; }
+        .toggle a.switch.on {
+            background: linear-gradient(120deg, var(--accent), #8b5cf6);
+            box-shadow: 0 0 0.7em -0.1em var(--accent);
+        }
+        .toggle a.switch.off { background: #39415a; }
         .toggle a.switch::after {
             content: "";
             position: absolute;
             top: 0.15em;
-            width: 1.2em;
-            height: 1.2em;
+            width: 1.15em;
+            height: 1.15em;
             border-radius: 50%;
             background: #fff;
-            box-shadow: 0 1px 2px rgba(0,0,0,0.35);
-            transition: left 0.1s ease;
+            box-shadow: 0 1px 3px rgba(0, 0, 0, 0.55);
+            transition: left 0.18s ease;
         }
-        .toggle a.switch.on::after { left: 1.25em; }
+        .toggle a.switch.on::after { left: 1.2em; }
         .toggle a.switch.off::after { left: 0.15em; }
-        .toggle .toggle-label { font-weight: 600; }
-        .toggle .toggle-state { color: var(--muted); }
-
-        .adjustment-off-banner {
-            margin: 0 0 1.1rem;
-            padding: 0.6em 1em;
-            border-radius: 0.4em;
-            background: var(--warn-bg);
-            color: var(--warn);
-            font-weight: 600;
-            border: 1px solid #f0d9a6;
-        }
-
-        table {
-            width: 100%;
-            border-collapse: collapse;
-            table-layout: fixed;
-        }
-        col.col-cve { width: 12%; }
-        col.col-priority { width: 22%; }
-        col.col-rationale { width: 40%; }
-        col.col-workloads { width: 26%; }
-
-        thead th {
-            text-align: left;
-            font-size: 0.8rem;
-            text-transform: uppercase;
-            letter-spacing: 0.05em;
+        .toggle .toggle-label { font-weight: 600; white-space: nowrap; }
+        .toggle .toggle-state {
+            font-family: var(--mono);
+            font-size: 0.78rem;
             color: var(--muted);
-            border-bottom: 2px solid var(--line);
-            padding: 0.5em 0.7em;
-        }
-        tbody tr {
-            border-bottom: 1px solid var(--line);
-        }
-        tbody tr:nth-child(even) { background: var(--row-alt); }
-        tbody tr.row-triage-failed { background: var(--danger-bg); }
-        tbody tr.row-triage-missing { background: var(--warn-bg); }
-        tbody tr.row-has-exposure-signal { box-shadow: inset 3px 0 0 var(--danger); }
-        td {
-            padding: 0.65em 0.7em;
-            vertical-align: top;
-        }
-        .cve-id {
-            font-weight: 700;
-            font-variant-numeric: tabular-nums;
+            width: 1.8em;
         }
 
-        /* --- Contextual Priority vs Severity, without arithmetic. --- */
-        .priority-cell { min-width: 0; }
+        .adjustment-off-banner { margin: 0 0 1.4rem; }
+
+        /* --- Column captions, aligned to the row grid below. ------------- */
+        .row-grid {
+            display: grid;
+            grid-template-columns: 6.5rem minmax(0, 1fr) minmax(0, 15.5rem);
+            gap: 1.4rem;
+            align-items: start;
+        }
+        .queue-head {
+            padding: 0 1.2rem 0.55rem;
+            font-size: 0.7rem;
+            font-weight: 700;
+            letter-spacing: 0.12em;
+            text-transform: uppercase;
+            color: var(--muted);
+        }
+        .queue-head .head-priority { text-align: center; }
+
+        .queue-list { display: flex; flex-direction: column; gap: 0.7rem; }
+
+        /* --- One Vulnerability ------------------------------------------ */
+        .queue-row {
+            position: relative;
+            padding: 1.15rem 1.2rem;
+            border-radius: var(--radius);
+            border: 1px solid var(--line);
+            background: linear-gradient(180deg, var(--surface-2), var(--surface));
+            box-shadow: var(--shadow);
+            transition: border-color 0.16s ease, transform 0.16s ease, box-shadow 0.16s ease;
+        }
+        .queue-row::before {
+            content: "";
+            position: absolute;
+            left: 0;
+            top: 0.9rem;
+            bottom: 0.9rem;
+            width: 3px;
+            border-radius: 0 3px 3px 0;
+            background: var(--band, var(--sev-default));
+            opacity: 0.9;
+        }
+        .queue-row:hover {
+            border-color: var(--line-strong);
+            transform: translateY(-1px);
+            box-shadow: 0 1px 2px rgba(0, 0, 0, 0.5), 0 18px 40px -18px rgba(0, 0, 0, 0.9);
+        }
+        /* An active Exposure Signal is the platform's whole claim - the row
+           carrying one is lit, not merely marked. */
+        .queue-row.row-has-exposure-signal {
+            border-color: var(--danger-line);
+            background:
+                radial-gradient(38rem 12rem at 0% 0%, rgba(255, 77, 109, 0.09), transparent 70%),
+                linear-gradient(180deg, var(--surface-2), var(--surface));
+        }
+        .queue-row.row-triage-failed { border-color: var(--danger-line); }
+        .queue-row.row-triage-missing { border-color: var(--warn-line); }
+
+        /* --- Contextual Priority, as a dial rather than a bare number. --- */
+        .priority-cell { display: flex; flex-direction: column; align-items: center; gap: 0.55rem; }
+        .ring {
+            position: relative;
+            width: 5.1rem;
+            height: 5.1rem;
+            border-radius: 50%;
+            display: grid;
+            place-items: center;
+            background: conic-gradient(from 0deg, var(--band) calc(var(--cp) * 1%), rgba(255, 255, 255, 0.07) 0);
+            filter: drop-shadow(0 0 0.6rem color-mix(in srgb, var(--band) 35%, transparent));
+        }
+        .ring::before {
+            content: "";
+            position: absolute;
+            inset: 0.42rem;
+            border-radius: 50%;
+            background: var(--surface);
+        }
+        .ring-core { position: relative; text-align: center; line-height: 1; }
         .priority-number {
-            font-size: 1.4rem;
-            font-weight: 800;
-            font-variant-numeric: tabular-nums;
-        }
-        .severity-pill {
-            display: inline-block;
-            margin-left: 0.5em;
-            padding: 0.1em 0.6em;
-            border-radius: 0.3em;
-            font-size: 0.75rem;
+            display: block;
+            font-family: var(--mono);
+            font-size: 1.55rem;
             font-weight: 700;
-            letter-spacing: 0.03em;
-            color: #fff;
-            vertical-align: middle;
+            letter-spacing: -0.03em;
+            color: var(--ink);
         }
-        .severity-pill.CRITICAL { background: var(--sev-critical); }
-        .severity-pill.HIGH { background: var(--sev-high); }
-        .severity-pill.MEDIUM { background: var(--sev-medium); }
-        .severity-pill.LOW { background: var(--sev-low); }
-        .severity-pill.UNKNOWN, .severity-pill.NEGLIGIBLE { background: var(--sev-default); }
+        .ring-core .ring-label {
+            display: block;
+            margin-top: 0.2em;
+            font-size: 0.58rem;
+            font-weight: 700;
+            letter-spacing: 0.13em;
+            color: var(--muted);
+        }
 
+        /* The two scales side by side, so their divergence reads without
+           the operator doing any arithmetic. */
         .priority-bars {
-            margin-top: 0.4em;
+            width: 100%;
             display: grid;
             grid-template-columns: auto 1fr;
-            row-gap: 0.2em;
-            column-gap: 0.5em;
+            row-gap: 0.28em;
+            column-gap: 0.4em;
             align-items: center;
         }
         .priority-bars .bar-label {
-            font-size: 0.7rem;
+            font-family: var(--mono);
+            font-size: 0.6rem;
+            font-weight: 700;
+            letter-spacing: 0.06em;
             color: var(--muted);
-            text-transform: uppercase;
-            letter-spacing: 0.03em;
         }
         .priority-bars .bar-track {
-            background: var(--line);
+            display: block;
+            height: 0.32rem;
             border-radius: 999px;
-            height: 0.5em;
+            background: rgba(255, 255, 255, 0.08);
             overflow: hidden;
         }
-        .priority-bars .bar-fill {
-            height: 100%;
-            border-radius: 999px;
+        .priority-bars .bar-fill { display: block; height: 100%; border-radius: 999px; }
+        .priority-bars .bar-fill.contextual { background: var(--band); }
+        .priority-bars .bar-fill.severity { background: #6d788f; }
+
+        /* --- The row's headline ----------------------------------------- */
+        .row-main { min-width: 0; }
+        .row-headline {
+            display: flex;
+            align-items: center;
+            gap: 0.6rem;
+            flex-wrap: wrap;
+            margin-bottom: 0.5rem;
         }
-        .priority-bars .bar-fill.contextual { background: var(--accent); }
-        .priority-bars .bar-fill.severity { background: var(--sev-default); }
-        .divergent .priority-number { color: var(--accent); }
-        .divergent .priority-bars .bar-fill.contextual { background: var(--danger); }
+        .cve-id {
+            font-family: var(--mono);
+            font-size: 1.02rem;
+            font-weight: 700;
+            letter-spacing: -0.01em;
+            color: var(--ink);
+        }
+        /* The verdict in three words: what the cluster did to this CVE's
+           static rating. */
+        .delta {
+            display: inline-flex;
+            align-items: center;
+            gap: 0.35em;
+            padding: 0.16em 0.62em;
+            border-radius: 999px;
+            font-size: 0.72rem;
+            font-weight: 700;
+            letter-spacing: 0.01em;
+            border: 1px solid currentColor;
+            background: color-mix(in srgb, currentColor 12%, transparent);
+        }
+        .delta.up { color: var(--danger); }
+        .delta.down { color: var(--calm); }
+        .delta.flat { color: var(--muted); }
+        .delta .delta-figure { font-family: var(--mono); }
 
         .rationale {
-            color: #333;
-            font-size: 0.95rem;
-            white-space: normal;
+            margin: 0;
+            color: var(--ink-dim);
+            font-size: 0.93rem;
+            line-height: 1.55;
             overflow-wrap: break-word;
         }
         .triage-issue {
-            display: inline-block;
-            font-size: 0.85rem;
-            font-style: italic;
+            display: inline-flex;
+            align-items: center;
+            gap: 0.45em;
+            font-size: 0.86rem;
+            font-weight: 600;
+            padding: 0.3em 0.7em;
+            border-radius: var(--radius-sm);
+            border: 1px solid currentColor;
+            background: color-mix(in srgb, currentColor 10%, transparent);
         }
-        .triage-issue.triage-failed { color: var(--danger); font-weight: 600; }
+        .triage-issue.triage-failed { color: var(--danger); }
         .triage-issue.triage-missing { color: var(--warn); }
 
-        /* --- Exposure Signal badge: unmissable. Core styling shared with
-           the Workload detail page's badge - see _shared_style.html. --- */
-        .exposure-signal-badge {
-            gap: 0.35em;
-            padding: 0.15em 0.6em;
-            border-radius: 0.35em;
-            font-size: 0.85em;
+        /* --- Affected Workloads ------------------------------------------ */
+        .workloads-cell { display: flex; flex-wrap: wrap; gap: 0.4rem; align-content: start; }
+        .workload-link {
+            display: inline-flex;
+            align-items: center;
+            gap: 0.45em;
+            max-width: 100%;
+            padding: 0.3em 0.7em;
+            border-radius: 999px;
+            border: 1px solid var(--line-strong);
+            background: var(--surface-3);
+            color: var(--ink-dim);
+            font-size: 0.83rem;
+            font-weight: 600;
+            text-decoration: none;
+            transition: border-color 0.15s ease, color 0.15s ease, background 0.15s ease;
         }
-        .workload-link { display: inline-block; margin: 0.15em 0.5em 0.15em 0; }
+        .workload-link:hover {
+            border-color: var(--accent-line);
+            color: #fff;
+            background: var(--accent-soft);
+        }
+        .workload-link.signalling { border-color: var(--danger-line); color: #ffd9e0; }
+        .workload-link .workload-name { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+        .exposure-signal-badge {
+            gap: 0.3em;
+            padding: 0.1em 0.5em;
+            border-radius: 999px;
+            font-size: 0.66rem;
+        }
 
-        #scanning, #empty-queue {
-            font-size: 1.1rem;
-            color: var(--muted);
+        /* --- Client-side filtering --------------------------------------- */
+        .queue-row[hidden] { display: none; }
+        #no-matches { display: none; }
+        #no-matches.showing { display: flex; }
+
+        @media (max-width: 960px) {
+            .row-grid { grid-template-columns: 4.6rem minmax(0, 1fr); }
+            .queue-head .head-workloads { display: none; }
+            .workloads-cell { grid-column: 2; }
+            .ring { width: 4.2rem; height: 4.2rem; }
+            .priority-number { font-size: 1.25rem; }
+        }
+        @media (max-width: 620px) {
+            .row-grid { grid-template-columns: minmax(0, 1fr); gap: 0.9rem; }
+            .queue-head { display: none; }
+            .priority-cell { flex-direction: row; align-items: center; gap: 1rem; }
+            .priority-bars { max-width: 12rem; }
+            .workloads-cell { grid-column: auto; }
         }
     </style>
 </head>
 <body>
-    <h1>Queue</h1>
-    <div class="toolbar">
-        <form method="post" action="/rescan">
-            <button type="submit">Rescan now</button>
-        </form>
-        <p id="adjustment-toggle" class="toggle">
-            <span class="toggle-label">Model adjustment</span>
-            {% if adjustment_enabled %}
-            <a class="switch on" href="/?adjustment=off" title="Turn model adjustment off" aria-label="Turn model adjustment off"></a>
-            <span class="toggle-state">on</span>
-            {% else %}
-            <a class="switch off" href="/?adjustment=on" title="Turn model adjustment on" aria-label="Turn model adjustment on"></a>
-            <span class="toggle-state">off</span>
-            {% endif %}
+    <header class="masthead">
+        <div class="shell masthead-inner">
+            <a class="brand" href="/">
+                <span class="brand-mark" aria-hidden="true"></span>
+                <span class="brand-text">
+                    <span class="brand-name">Contextual Priority Platform</span>
+                    <span class="brand-tag">Vulnerabilities ranked by what the cluster is doing now</span>
+                </span>
+            </a>
+            <form method="post" action="/rescan">
+                <button class="btn" type="submit"><span class="btn-glyph spin" aria-hidden="true">&#8635;</span>Rescan now</button>
+            </form>
+        </div>
+    </header>
+
+    <main class="shell">
+        {% set ns = namespace(escalated=0, calmed=0, untriaged=0) %}
+        {% set signalling_workloads = [] %}
+        {% for row in rows %}
+            {% set delta = row.contextual_priority - row.base_priority %}
+            {% if delta > 0 %}{% set ns.escalated = ns.escalated + 1 %}{% endif %}
+            {% if delta < 0 %}{% set ns.calmed = ns.calmed + 1 %}{% endif %}
+            {% if row.triage_failed or not row.rationale %}{% set ns.untriaged = ns.untriaged + 1 %}{% endif %}
+            {% for workload in row.affected_workloads %}
+                {% set key = workload.namespace ~ "/" ~ workload.name %}
+                {% if workload.has_exposure_signal and key not in signalling_workloads %}
+                    {% set _ = signalling_workloads.append(key) %}
+                {% endif %}
+            {% endfor %}
+        {% endfor %}
+
+        <div class="page-head">
+            <h1>Queue</h1>
+            <p class="lede">Every Vulnerability worth a Triage, ranked by Contextual Priority - its Severity read together with how the Workloads running it are behaving right now.</p>
+        </div>
+
+        {% if rows %}
+        <section class="stats" aria-label="Queue summary">
+            <div class="stat">
+                <div class="stat-value">{{ rows | length }}</div>
+                <div class="stat-label">On the queue</div>
+                <div class="stat-note">Candidate Set members</div>
+            </div>
+            <div class="stat" style="--stat-accent: var(--danger);">
+                <div class="stat-value">{{ ns.escalated }}</div>
+                <div class="stat-label">Raised by Triage</div>
+                <div class="stat-note">Cluster evidence pushed them up</div>
+            </div>
+            <div class="stat" style="--stat-accent: var(--calm);">
+                <div class="stat-value">{{ ns.calmed }}</div>
+                <div class="stat-label">Lowered by Triage</div>
+                <div class="stat-note">Cluster evidence pulled them down</div>
+            </div>
+            <div class="stat" style="--stat-accent: var(--danger);">
+                <div class="stat-value">{{ signalling_workloads | length }}</div>
+                <div class="stat-label">Under Exposure Signal</div>
+                <div class="stat-note">Workloads behaving abnormally</div>
+            </div>
+            <div class="stat" style="--stat-accent: var(--warn);">
+                <div class="stat-value">{{ ns.untriaged }}</div>
+                <div class="stat-label">Awaiting Triage</div>
+                <div class="stat-note">Showing a base score</div>
+            </div>
+        </section>
+
+        <div class="toolbar">
+            <p class="filter">
+                <span class="filter-glyph" aria-hidden="true">&#9906;</span>
+                <input id="queue-filter" type="search" autocomplete="off"
+                       aria-label="Filter the queue by CVE, Workload or rationale"
+                       placeholder="Filter by CVE, Workload or rationale">
+                <kbd>/</kbd>
+            </p>
+            <p id="adjustment-toggle" class="toggle">
+                <span class="toggle-label">Model adjustment</span>
+                {% if adjustment_enabled %}
+                <a class="switch on" href="/?adjustment=off" title="Turn model adjustment off" aria-label="Turn model adjustment off"></a>
+                <span class="toggle-state">on</span>
+                {% else %}
+                <a class="switch off" href="/?adjustment=on" title="Turn model adjustment on" aria-label="Turn model adjustment on"></a>
+                <span class="toggle-state">off</span>
+                {% endif %}
+            </p>
+        </div>
+
+        {% endif %}
+
+        {% if not adjustment_enabled and rows %}
+        <p class="notice notice-warn adjustment-off-banner">
+            <span aria-hidden="true">&#9888;</span>
+            Model adjustment is off - every row below shows its base score, unadjusted.
         </p>
-    </div>
-    {% if not adjustment_enabled %}
-    <p class="adjustment-off-banner">Model adjustment is off - every row below shows its base score, unadjusted.</p>
-    {% endif %}
-    {% if rows %}
-    <table>
-        <colgroup>
-            <col class="col-cve">
-            <col class="col-priority">
-            <col class="col-rationale">
-            <col class="col-workloads">
-        </colgroup>
-        <thead>
-            <tr>
-                <th>CVE</th>
-                <th>Contextual Priority / Severity</th>
-                <th>Rationale</th>
-                <th>Affected Workloads</th>
-            </tr>
-        </thead>
-        <tbody>
+        {% endif %}
+
+        {% if rows %}
+        <div class="row-grid queue-head" aria-hidden="true">
+            <span class="head-priority">Priority</span>
+            <span>Vulnerability &amp; rationale</span>
+            <span class="head-workloads">Affected Workloads</span>
+        </div>
+        <div class="queue-list" id="queue-list">
             {% for row in rows %}
-            {% set divergent = (row.contextual_priority - row.severity_score) | abs >= 20 %}
+            {% set delta = row.contextual_priority - row.base_priority %}
             {% set has_signal = row.affected_workloads | selectattr("has_exposure_signal") | list | length > 0 %}
-            <tr class="{% if row.triage_failed %}row-triage-failed{% elif not row.rationale %}row-triage-missing{% endif %}{% if has_signal %} row-has-exposure-signal{% endif %}">
-                <td class="cve-id">{{ row.cve_id }}</td>
-                <td class="priority-cell{% if divergent %} divergent{% endif %}">
-                    <span class="priority-number">{{ row.contextual_priority }}</span>
-                    <span class="severity-pill {{ row.severity | upper }}">{{ row.severity | upper }}</span>
-                    <div class="priority-bars" title="Contextual Priority {{ row.contextual_priority }} vs. Severity {{ row.severity }}">
+            {% if row.contextual_priority >= 80 %}{% set band = "var(--sev-critical)" %}
+            {% elif row.contextual_priority >= 60 %}{% set band = "var(--sev-high)" %}
+            {% elif row.contextual_priority >= 40 %}{% set band = "var(--sev-medium)" %}
+            {% else %}{% set band = "var(--sev-low)" %}{% endif %}
+            <article class="queue-row row-grid{% if row.triage_failed %} row-triage-failed{% elif not row.rationale %} row-triage-missing{% endif %}{% if has_signal %} row-has-exposure-signal{% endif %}"
+                     style="--band: {{ band }}; --cp: {{ row.contextual_priority }};">
+                <div class="priority-cell">
+                    <div class="ring" role="img" aria-label="Contextual Priority {{ row.contextual_priority }} out of 100">
+                        <span class="ring-core">
+                            <span class="priority-number">{{ row.contextual_priority }}</span>
+                            <span class="ring-label">CP</span>
+                        </span>
+                    </div>
+                    <div class="priority-bars" title="Contextual Priority {{ row.contextual_priority }} against a Severity of {{ row.severity | upper }}">
                         <span class="bar-label">CP</span>
                         <span class="bar-track"><span class="bar-fill contextual" style="width: {{ row.contextual_priority }}%;"></span></span>
-                        <span class="bar-label">Sev</span>
+                        <span class="bar-label">SEV</span>
                         <span class="bar-track"><span class="bar-fill severity" style="width: {{ row.severity_score }}%;"></span></span>
                     </div>
-                </td>
-                <td class="rationale">
+                </div>
+
+                <div class="row-main">
+                    <div class="row-headline">
+                        <span class="cve-id">{{ row.cve_id }}</span>
+                        <span class="severity-pill {{ row.severity | upper }}">{{ row.severity | upper }}</span>
+                        {% if delta > 0 %}
+                        <span class="delta up" title="Triage raised this Vulnerability's base score of {{ row.base_priority }} on the evidence in this cluster">
+                            <span aria-hidden="true">&#9650;</span><span class="delta-figure">{{ delta }}</span> on cluster evidence
+                        </span>
+                        {% elif delta < 0 %}
+                        <span class="delta down" title="Triage lowered this Vulnerability's base score of {{ row.base_priority }} on the evidence in this cluster">
+                            <span aria-hidden="true">&#9660;</span><span class="delta-figure">{{ -delta }}</span> on cluster evidence
+                        </span>
+                        {% endif %}
+                    </div>
                     {% if row.triage_failed %}
-                    <span class="triage-issue triage-failed">&#9888; Triage unavailable - showing base score.</span>
+                    <span class="triage-issue triage-failed"><span aria-hidden="true">&#9888;</span>Triage unavailable - showing base score.</span>
                     {% elif row.rationale %}
-                    {{ row.rationale }}
+                    <p class="rationale">{{ row.rationale }}</p>
                     {% else %}
-                    <span class="triage-issue triage-missing">Not yet triaged - showing base score.</span>
+                    <span class="triage-issue triage-missing"><span aria-hidden="true">&#8987;</span>Not yet triaged - showing base score.</span>
                     {% endif %}
-                </td>
-                <td>
+                </div>
+
+                <div class="workloads-cell">
                     {% for workload in row.affected_workloads %}
-                    <span class="workload-link"><a href="/workloads/{{ workload.namespace }}/{{ workload.name }}">{{ workload.name }}</a>{% if workload.has_exposure_signal %} <span class="exposure-signal-badge" title="Exposure Signal active">&#9888; Exposure Signal</span>{% endif %}</span>
+                    <a class="workload-link{% if workload.has_exposure_signal %} signalling{% endif %}" href="/workloads/{{ workload.namespace }}/{{ workload.name }}">
+                        <span class="workload-name">{{ workload.name }}</span>
+                        {% if workload.has_exposure_signal %}<span class="exposure-signal-badge" title="Exposure Signal active">&#9888; Exposure Signal</span>{% endif %}
+                    </a>
                     {% endfor %}
-                </td>
-            </tr>
+                </div>
+            </article>
             {% endfor %}
-        </tbody>
-    </table>
-    {% elif scanning %}
-    <p id="scanning">First scan in progress. This can take several minutes for a new image - the queue will fill in as scans complete.</p>
-    {% else %}
-    <p id="empty-queue">The queue is empty.</p>
-    {% endif %}
+        </div>
+        <div id="no-matches" class="state-panel">
+            <span class="state-title">Nothing on the queue matches that.</span>
+            <p>Clear the filter to see every Candidate Set member again.</p>
+        </div>
+        <script>
+            // Filtering is a view over rows already on the page - it never
+            // asks the platform to re-rank anything, so it stays instant
+            // and works with the model-adjustment toggle either way.
+            (function () {
+                var input = document.getElementById("queue-filter");
+                var list = document.getElementById("queue-list");
+                var empty = document.getElementById("no-matches");
+                if (!input || !list) { return; }
+                var rows = Array.prototype.slice.call(list.children);
+                var haystacks = rows.map(function (row) { return row.textContent.toLowerCase(); });
+
+                input.addEventListener("input", function () {
+                    var needle = input.value.trim().toLowerCase();
+                    var shown = 0;
+                    rows.forEach(function (row, index) {
+                        var match = needle === "" || haystacks[index].indexOf(needle) !== -1;
+                        row.hidden = !match;
+                        if (match) { shown += 1; }
+                    });
+                    empty.classList.toggle("showing", shown === 0);
+                });
+
+                document.addEventListener("keydown", function (event) {
+                    if (event.key === "/" && document.activeElement !== input) {
+                        event.preventDefault();
+                        input.focus();
+                        input.select();
+                    } else if (event.key === "Escape" && document.activeElement === input) {
+                        input.value = "";
+                        input.dispatchEvent(new Event("input"));
+                        input.blur();
+                    }
+                });
+            })();
+        </script>
+        {% elif scanning %}
+        <div class="card state-panel" id="scanning">
+            <span class="state-title">First scan in progress.</span>
+            <p>This can take several minutes for a new image - the queue will fill in as scans complete.</p>
+            <span class="state-bar" aria-hidden="true"></span>
+        </div>
+        {% else %}
+        <div class="card state-panel" id="empty-queue">
+            <span class="state-title">The queue is empty.</span>
+            <p>Nothing in the cluster has survived pre-filtering into the Candidate Set. Rescan once new images are rolled out.</p>
+        </div>
+        {% endif %}
+    </main>
 </body>
 </html>

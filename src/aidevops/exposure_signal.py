@@ -24,11 +24,17 @@ from __future__ import annotations
 from dataclasses import dataclass
 from datetime import datetime, timedelta
 
-from aidevops.baseline import STEP, TRAINING_LOOKBACK, WINDOW, WindowFeatures, compute_window_features, train_baseline
+from aidevops.baseline import STEP, TRAINING_LOOKBACK, WINDOW, Baseline, WindowFeatures, compute_window_features, train_baseline
 from aidevops.domain import TelemetrySample
 
 FIRE_AFTER = 2
 CLEAR_AFTER = 3
+
+# Per the spec: "refit every ten minutes" - the Baseline is not
+# recomputed on every 30s detection window, only when this much time has
+# passed since its last refit (or immediately after the freeze in
+# ADR-0003 lifts).
+REFIT_INTERVAL = timedelta(minutes=10)
 
 
 @dataclass(frozen=True)
@@ -101,16 +107,30 @@ def detect_workload_exposure_signal(
     fired_window_start: datetime | None = None
     fired_at: datetime | None = None
 
+    baseline: Baseline | None = None
+    last_refit_end: datetime | None = None
+
     for step_end in step_ends:
         training_end = frozen_training_end if state.active else step_end
-        training_start = training_end - lookback
-        pooled_training_windows = [
-            w
-            for pod_windows in windows_by_pod.values()
-            for w in pod_windows
-            if training_start <= w.start and w.end < training_end
-        ]
-        baseline = train_baseline(pooled_training_windows)
+        # While active, the Baseline is refit exactly once - right after
+        # the freeze point in ADR-0003 is set - and never again until the
+        # signal clears; while inactive, it refits on the REFIT_INTERVAL
+        # cadence from the spec rather than on every 30s window.
+        should_refit = baseline is None or (
+            state.active and last_refit_end != training_end
+        ) or (
+            not state.active and (last_refit_end is None or step_end - last_refit_end >= REFIT_INTERVAL)
+        )
+        if should_refit:
+            training_start = training_end - lookback
+            pooled_training_windows = [
+                w
+                for pod_windows in windows_by_pod.values()
+                for w in pod_windows
+                if training_start <= w.start and w.end < training_end
+            ]
+            baseline = train_baseline(pooled_training_windows)
+            last_refit_end = training_end
 
         pod_windows_here = [w for pod_windows in windows_by_pod.values() for w in pod_windows if w.end == step_end]
         # Per ADR-0002: each replica's window is scored on its own against

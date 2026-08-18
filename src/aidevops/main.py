@@ -30,10 +30,10 @@ settings = Settings.from_env()
 connection = connect(settings.database_path)
 ports = Ports(
     cluster_inventory=RealClusterInventory(),
-    telemetry=PrometheusTelemetry(settings.prometheus_url),
+    telemetry=PrometheusTelemetry(settings.telemetry_url),
     image_scanner=RealImageScanner(),
     threat_intel=RealThreatIntel(),
-    triage_model=RealTriageModel(api_key=settings.deepseek_api_key, base_url=settings.deepseek_base_url),
+    triage_model=RealTriageModel(api_key=settings.triage_model_api_key, base_url=settings.triage_model_base_url),
 )
 
 app = create_app(connection, ports, inventory_period_seconds=settings.inventory_period_seconds)

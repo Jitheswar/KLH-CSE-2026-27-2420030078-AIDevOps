@@ -50,9 +50,28 @@ cluster-up: tools
 		--for=condition=ready pod \
 		--selector=app.kubernetes.io/component=controller \
 		--timeout=180s
+	# A ready controller Pod is not yet a reachable admission webhook: the
+	# Pod's address still has to reach the admission Service's EndpointSlice
+	# and from there kube-proxy. Applying an Ingress inside that window fails
+	# with "connection refused" against the webhook, so wait for the
+	# EndpointSlice to name an address before returning.
+	until kubectl get endpointslice --namespace ingress-nginx \
+		--selector=kubernetes.io/service-name=ingress-nginx-controller-admission \
+		-o jsonpath='{.items[*].endpoints[*].addresses[*]}' 2>/dev/null \
+		| grep -q .; do sleep 1; done
 
+# Retries the apply because the admission webhook can still refuse
+# connections for a moment after its endpoint appears, and the seed contains
+# an Ingress that has to pass through it.
 seed: tools
-	kubectl apply -f deploy/seed/
+	@for attempt in 1 2 3 4 5 6 7 8 9 10; do \
+		if kubectl apply -f deploy/seed/; then break; fi; \
+		if [ "$$attempt" = 10 ]; then \
+			echo "seed failed after 10 attempts" >&2; exit 1; \
+		fi; \
+		echo "seed apply failed, retrying in 5s (attempt $$attempt/10)"; \
+		sleep 5; \
+	done
 	kubectl wait --for=condition=available --timeout=300s deployment --all --all-namespaces
 
 # Tears the cluster down completely. `cluster-up` after this returns the

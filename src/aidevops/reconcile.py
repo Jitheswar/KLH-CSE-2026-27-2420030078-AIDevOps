@@ -59,13 +59,18 @@ def run_triage_sequence(
         store_triage_outcomes(connection, outcomes)
 
 
-def retriage_workload(connection: sqlite3.Connection, ports: "Ports", workload_id: int) -> None:
+def retriage_workload(
+    connection: sqlite3.Connection,
+    ports: "Ports",
+    workload_id: int,
+    db_lock: ContextManager[None] = contextlib.nullcontext(),
+) -> None:
     """Re-runs Triage for exactly one Workload's Vulnerabilities - the
     surgical re-Triage an Exposure Signal transition triggers (see
     aidevops.detection.run_detection and the spec), rather than
     re-checking the whole Candidate Set.
     """
-    run_triage_sequence(connection, ports, workload_id=workload_id)
+    run_triage_sequence(connection, ports, db_lock=db_lock, workload_id=workload_id)
 
 
 def reconcile_workloads(

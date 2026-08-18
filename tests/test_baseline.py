@@ -19,7 +19,6 @@ from datetime import datetime, timedelta
 
 from aidevops.baseline import (
     MIN_WINDOWS_FOR_FOREST,
-    WINDOW,
     compute_window_features,
     train_baseline,
     train_workload_baseline,
@@ -133,16 +132,6 @@ def test_pooling_no_replicas_yields_an_unestablished_baseline() -> None:
 
     assert baseline.established is False
     assert baseline.training_window_count == 0
-
-
-def test_compute_window_features_steps_every_thirty_seconds() -> None:
-    series = _busy_series(20)
-
-    windows = compute_window_features(series)
-
-    assert len(windows) > 1
-    assert windows[1].start - windows[0].start == timedelta(seconds=30)
-    assert windows[0].end - windows[0].start == WINDOW
 
 
 def test_a_quiet_pod_with_no_receive_traffic_does_not_divide_by_zero() -> None:

@@ -162,11 +162,11 @@ def _write_results(session: MonitoringSession) -> None:
 @pytest.fixture(scope="module")
 def monitoring_session() -> MonitoringSession:
     settings = Settings.from_env()
-    _skip_unless_live_cluster_reachable(settings.prometheus_url)
+    _skip_unless_live_cluster_reachable(settings.telemetry_url)
 
     ports = Ports(
         cluster_inventory=RealClusterInventory(),
-        telemetry=PrometheusTelemetry(settings.prometheus_url),
+        telemetry=PrometheusTelemetry(settings.telemetry_url),
         image_scanner=FakeImageScanner(),
         threat_intel=FakeThreatIntel(),
         triage_model=FakeTriageModel(),

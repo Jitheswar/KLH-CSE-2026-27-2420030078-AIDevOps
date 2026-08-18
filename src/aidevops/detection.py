@@ -18,11 +18,12 @@ philosophy as aidevops.workload_detail.
 
 from __future__ import annotations
 
+import contextlib
 import logging
 import sqlite3
 from dataclasses import dataclass
 from datetime import datetime, timedelta
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, ContextManager
 
 from aidevops.baseline import TRAINING_LOOKBACK
 from aidevops.exposure_signal import ExposureSignal, detect_workload_exposure_signal
@@ -186,11 +187,15 @@ def run_detection(
     now: datetime,
     fetch_lookback: timedelta = DETECTION_LOOKBACK,
     training_lookback: timedelta = TRAINING_LOOKBACK,
+    db_lock: ContextManager[None] = contextlib.nullcontext(),
 ) -> None:
-    """The reference, no-lock composition of the three steps above - see
-    the module docstring. `aidevops.app` does not call this directly; it
-    has its own locked composition for the same reasons `aidevops.reconcile`
-    gives for `reconcile()`.
+    """The composition of the three steps above - see the module
+    docstring. `db_lock` brackets only the SQL read that lists known
+    Workloads and the SQL write per Workload's result - querying telemetry
+    per Workload is a real network call to Prometheus and must not run
+    with it held, same reasoning as aidevops.reconcile.run_triage_sequence.
+    Callers with no lock to worry about (tests, a manual trigger) get a
+    no-op lock by default; `aidevops.app` passes its own `threading.Lock`.
 
     A fire or clear transition (see `store_exposure_signal`) re-Triages
     that Workload's Vulnerabilities immediately, in the same pass - not
@@ -198,16 +203,20 @@ def run_detection(
     scoped to exactly this Workload so no other Workload's cached Triages
     are touched.
     """
-    for workload in list_workloads_with_pods(connection):
+    with db_lock:
+        known_workloads = list_workloads_with_pods(connection)
+
+    for workload in known_workloads:
         signal = detect_signal_for_workload(ports, workload.pod_names, now, fetch_lookback, training_lookback)
         if signal is None:
             logger.warning("telemetry unavailable for workload %s/%s, skipping detection", workload.namespace, workload.name)
             continue
-        transitioned = store_exposure_signal(
-            connection, workload.id, signal.active, signal.magnitude, signal.window_start, signal.fired_at
-        )
+        with db_lock:
+            transitioned = store_exposure_signal(
+                connection, workload.id, signal.active, signal.magnitude, signal.window_start, signal.fired_at
+            )
         if transitioned:
-            retriage_workload(connection, ports, workload.id)
+            retriage_workload(connection, ports, workload.id, db_lock=db_lock)
 
 
 def workload_has_active_exposure_signal(connection: sqlite3.Connection, namespace: str, name: str) -> bool:

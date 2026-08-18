@@ -17,6 +17,7 @@ from fastapi.testclient import TestClient
 
 from aidevops.app import Ports, create_app
 from aidevops.db import connect
+from aidevops.detection import store_exposure_signal
 from aidevops.domain import ContainerImage, Vulnerability, Workload
 from aidevops.ports.cluster_inventory import FakeClusterInventory
 from aidevops.ports.image_scanner import FakeImageScanner
@@ -113,6 +114,30 @@ def test_removed_workload_leaves_the_queue(frontend: Workload, backend: Workload
         assert "CVE-2024-0001" in response.text
         assert "CVE-2024-0002" not in response.text
         assert "backend" not in response.text
+    connection.close()
+
+
+def test_a_removed_workloads_exposure_signal_does_not_survive_it(frontend: Workload) -> None:
+    """A redeployed Workload reusing a freed rowid must never inherit a
+    stale Exposure Signal from the Workload that used to have that id -
+    `db.connect` enables `PRAGMA foreign_keys` specifically so the
+    `exposure_signals` table's `ON DELETE CASCADE` actually fires when its
+    Workload is deleted here, rather than being silently ignored.
+    """
+    cluster_inventory = FakeClusterInventory([frontend])
+    image_scanner = FakeImageScanner({"sha256:frontend": [_vulnerability("CVE-2024-0001")]})
+    client, connection = _build_client(cluster_inventory, image_scanner)
+
+    with client:
+        client.post("/rescan")
+        workload_id = connection.execute("SELECT id FROM workloads WHERE name = 'frontend'").fetchone()["id"]
+        store_exposure_signal(connection, workload_id=workload_id, active=True, magnitude=5.0)
+        assert connection.execute("SELECT 1 FROM exposure_signals WHERE workload_id = ?", (workload_id,)).fetchone() is not None
+
+        cluster_inventory.set_workloads([])
+        client.post("/rescan")
+
+        assert connection.execute("SELECT 1 FROM exposure_signals WHERE workload_id = ?", (workload_id,)).fetchone() is None
     connection.close()
 
 
