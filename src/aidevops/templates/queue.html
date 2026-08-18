@@ -3,12 +3,39 @@
 <head>
     <meta charset="utf-8">
     <title>Contextual Priority Platform</title>
+    <style>
+        .exposure-signal-badge {
+            display: inline-block;
+            padding: 0.1em 0.5em;
+            border-radius: 0.3em;
+            background: #b00020;
+            color: #fff;
+            font-weight: bold;
+            font-size: 0.85em;
+        }
+        .rationale {
+            color: #444;
+            font-size: 0.9em;
+        }
+        .triage-failed {
+            color: #b00020;
+            font-size: 0.85em;
+        }
+    </style>
 </head>
 <body>
     <h1>Queue</h1>
     <form method="post" action="/rescan">
         <button type="submit">Rescan now</button>
     </form>
+    <p id="adjustment-toggle">
+        Model adjustment:
+        {% if adjustment_enabled %}
+        <strong>on</strong> (<a href="/?adjustment=off">turn off</a>)
+        {% else %}
+        <strong>off</strong> - showing base scores only (<a href="/?adjustment=on">turn on</a>)
+        {% endif %}
+    </p>
     {% if rows %}
     <table>
         <thead>
@@ -16,6 +43,7 @@
                 <th>CVE</th>
                 <th>Contextual Priority</th>
                 <th>Severity</th>
+                <th>Rationale</th>
                 <th>Affected Workloads</th>
             </tr>
         </thead>
@@ -23,11 +51,18 @@
             {% for row in rows %}
             <tr>
                 <td>{{ row.cve_id }}</td>
-                <td>{{ row.base_priority }}</td>
+                <td>{{ row.contextual_priority }}</td>
                 <td>{{ row.severity }}</td>
+                <td class="rationale">
+                    {% if row.triage_failed %}
+                    <span class="triage-failed">Triage unavailable - showing base score.</span>
+                    {% elif row.rationale %}
+                    {{ row.rationale }}
+                    {% endif %}
+                </td>
                 <td>
                     {% for workload in row.affected_workloads %}
-                    <a href="/workloads/{{ workload.namespace }}/{{ workload.name }}">{{ workload.name }}</a>{% if not loop.last %}, {% endif %}
+                    <a href="/workloads/{{ workload.namespace }}/{{ workload.name }}">{{ workload.name }}</a>{% if workload.has_exposure_signal %} <span class="exposure-signal-badge" title="Exposure Signal active">&#9888; Exposure Signal</span>{% endif %}{% if not loop.last %}, {% endif %}
                     {% endfor %}
                 </td>
             </tr>

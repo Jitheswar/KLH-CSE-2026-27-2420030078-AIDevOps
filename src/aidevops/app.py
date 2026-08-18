@@ -23,17 +23,20 @@ from fastapi.templating import Jinja2Templates
 
 from aidevops.candidates import fetch_vulnerability_rows, score_candidate_set, store_candidate_set
 from aidevops.charts import render_line_chart
+from aidevops.detection import detect_signal_for_workload, list_workloads_with_pods, store_exposure_signal, workload_has_active_exposure_signal
 from aidevops.ports.cluster_inventory import ClusterInventoryPort
 from aidevops.ports.image_scanner import ImageScannerPort
 from aidevops.ports.telemetry import TelemetryPort
 from aidevops.ports.threat_intel import ThreatIntelPort
 from aidevops.ports.triage_model import TriageModelPort
 from aidevops.queue import get_queue_rows, has_pending_scans
-from aidevops.reconcile import reconcile_workloads, scan_pending_images, store_scan_result
+from aidevops.reconcile import reconcile_workloads, release_scan_claim, scan_pending_images, store_scan_result
+from aidevops.triage import enrich_with_threat_intel, fetch_pending_triage_candidates, run_triage_model, store_triage_outcomes
 from aidevops.workload_detail import get_workload_pods, get_workload_telemetry_and_baseline, scaled_band
 
 TEMPLATES_DIR = Path(__file__).parent / "templates"
 DEFAULT_INVENTORY_PERIOD_SECONDS = 60.0
+DEFAULT_DETECTION_PERIOD_SECONDS = 60.0
 
 
 @dataclass(frozen=True)
@@ -72,7 +75,11 @@ def _locked_reconcile(connection: sqlite3.Connection, ports: Ports, db_lock: thr
         with db_lock:
             store_scan_result(connection, digest, vulnerabilities)
 
-    scan_pending_images(connection, ports, pending, store=_locked_store)
+    def _locked_release(connection: sqlite3.Connection, digest: str) -> None:
+        with db_lock:
+            release_scan_claim(connection, digest)
+
+    scan_pending_images(connection, ports, pending, store=_locked_store, release=_locked_release)
 
     # Threat intel lookups are in-memory dict reads against the snapshot
     # loaded at startup, not a network call, but scoring and sorting a
@@ -85,11 +92,51 @@ def _locked_reconcile(connection: sqlite3.Connection, ports: Ports, db_lock: thr
     with db_lock:
         store_candidate_set(connection, candidates)
 
+    # A real Triage call is a DeepSeek request per Vulnerability - same
+    # reasoning as scanning above, it must not run with db_lock held.
+    # Fetching which candidates still need it, and storing the result, are
+    # both quick SQL steps and do need the lock.
+    with db_lock:
+        triage_candidates = fetch_pending_triage_candidates(connection)
+    triage_candidates = enrich_with_threat_intel(triage_candidates, ports.threat_intel)
+    outcomes = run_triage_model(ports.triage_model, triage_candidates)
+    with db_lock:
+        store_triage_outcomes(connection, outcomes)
+
+
+async def _detection_loop(
+    connection: sqlite3.Connection, ports: Ports, period_seconds: float, db_lock: threading.Lock
+) -> None:
+    while True:
+        await asyncio.to_thread(_locked_detect, connection, ports, db_lock)
+        await asyncio.sleep(period_seconds)
+
+
+def _locked_detect(connection: sqlite3.Connection, ports: Ports, db_lock: threading.Lock) -> None:
+    # Querying telemetry per Workload is a real network call to Prometheus,
+    # same reasoning as _locked_reconcile above - it must not run with
+    # db_lock held, or every request needing it (the queue page, Workload
+    # detail, /rescan, the inventory loop) blocks for however long a
+    # detection pass across every Workload takes. Only the SQL read that
+    # lists known Workloads, and the SQL write per Workload's result, need
+    # the lock - see aidevops.detection's module docstring.
+    with db_lock:
+        known_workloads = list_workloads_with_pods(connection)
+
+    now = datetime.now()
+    for workload in known_workloads:
+        signal = detect_signal_for_workload(ports, workload.pod_names, now)
+        if signal is None:
+            continue
+        with db_lock:
+            store_exposure_signal(connection, workload.id, signal.active)
+
 
 def create_app(
     connection: sqlite3.Connection,
     ports: Ports,
     inventory_period_seconds: float = DEFAULT_INVENTORY_PERIOD_SECONDS,
+    detection_period_seconds: float = DEFAULT_DETECTION_PERIOD_SECONDS,
 ) -> FastAPI:
     templates = Jinja2Templates(directory=str(TEMPLATES_DIR))
     # A sqlite3.Connection is not safe for concurrent use across threads:
@@ -100,15 +147,21 @@ def create_app(
 
     @asynccontextmanager
     async def lifespan(app: FastAPI) -> AsyncIterator[None]:
-        task = asyncio.create_task(
+        inventory_task = asyncio.create_task(
             _inventory_loop(connection, ports, inventory_period_seconds, db_lock)
+        )
+        detection_task = asyncio.create_task(
+            _detection_loop(connection, ports, detection_period_seconds, db_lock)
         )
         try:
             yield
         finally:
-            task.cancel()
+            inventory_task.cancel()
+            detection_task.cancel()
             with contextlib.suppress(asyncio.CancelledError):
-                await task
+                await inventory_task
+            with contextlib.suppress(asyncio.CancelledError):
+                await detection_task
 
     app = FastAPI(title="Contextual Priority Platform", lifespan=lifespan)
 
@@ -116,11 +169,20 @@ def create_app(
     app.state.ports = ports
 
     @app.get("/", response_class=HTMLResponse)
-    def queue(request: Request) -> HTMLResponse:
+    def queue(request: Request, adjustment: str = "on") -> HTMLResponse:
+        # The model-adjustment toggle from the spec: a re-render, not a
+        # recomputation - base and adjustment are already stored
+        # separately (see aidevops.triage and ADR-0004), so flipping this
+        # is just which column get_queue_rows adds in.
+        apply_adjustment = adjustment != "off"
         with db_lock:
-            rows = get_queue_rows(connection)
+            rows = get_queue_rows(connection, apply_adjustment=apply_adjustment)
             scanning = has_pending_scans(connection)
-        return templates.TemplateResponse(request, "queue.html", {"rows": rows, "scanning": scanning})
+        return templates.TemplateResponse(
+            request,
+            "queue.html",
+            {"rows": rows, "scanning": scanning, "adjustment_enabled": apply_adjustment},
+        )
 
     @app.post("/rescan")
     def rescan() -> RedirectResponse:
@@ -155,6 +217,9 @@ def create_app(
                 for metric in ("cpu", "network_transmit", "network_receive")
             }
 
+        with db_lock:
+            exposure_signal_active = workload_has_active_exposure_signal(connection, namespace, name)
+
         return templates.TemplateResponse(
             request,
             "workload_detail.html",
@@ -164,6 +229,7 @@ def create_app(
                 "telemetry_available": telemetry.available,
                 "charts": charts,
                 "baseline_establishing": baseline is not None and not baseline.established,
+                "exposure_signal_active": exposure_signal_active,
             },
         )
 

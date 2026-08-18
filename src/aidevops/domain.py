@@ -64,3 +64,38 @@ class TriageAdjustment:
 
     adjustment: int
     rationale: str
+
+
+@dataclass(frozen=True)
+class ExposureSignalState:
+    """A Workload's current Exposure Signal, as the Triage model port needs
+    to see it. Detection itself is a later ticket - until then every caller
+    passes the default, inactive state.
+    """
+
+    active: bool = False
+    magnitude: float = 0.0
+
+    def cache_key(self) -> str:
+        """Part of the Triage cache key, per the spec: caching on this
+        alongside the CVE and image is what makes a signal transition
+        (a later ticket) invalidate exactly the Triages it should, by
+        simply changing which cache entry a lookup lands on.
+        """
+        return f"active:{self.magnitude:.3f}" if self.active else "inactive"
+
+
+@dataclass(frozen=True)
+class TriageContext:
+    """Everything the prompt needs for one Vulnerability in one Workload's
+    context - see the spec's list of what the prompt must carry.
+    """
+
+    vulnerability: Vulnerability
+    epss_score: float
+    kev_listed: bool
+    image_repository: str
+    workload_name: str
+    workload_namespace: str
+    externally_reachable: bool
+    exposure_signal: ExposureSignalState

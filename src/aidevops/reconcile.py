@@ -26,6 +26,7 @@ import sqlite3
 from typing import TYPE_CHECKING, Callable
 
 from aidevops.candidates import fetch_vulnerability_rows, score_candidate_set, store_candidate_set
+from aidevops.triage import enrich_with_threat_intel, fetch_pending_triage_candidates, run_triage_model, store_triage_outcomes
 
 if TYPE_CHECKING:
     from aidevops.app import Ports
@@ -51,6 +52,13 @@ def reconcile(connection: sqlite3.Connection, ports: "Ports") -> None:
     rows = fetch_vulnerability_rows(connection)
     candidates = score_candidate_set(rows, ports.threat_intel)
     store_candidate_set(connection, candidates)
+
+    # Triages every Candidate Set member still missing one, per the spec's
+    # per-CVE-per-image cache - see aidevops.triage.
+    triage_candidates = fetch_pending_triage_candidates(connection)
+    triage_candidates = enrich_with_threat_intel(triage_candidates, ports.threat_intel)
+    outcomes = run_triage_model(ports.triage_model, triage_candidates)
+    store_triage_outcomes(connection, outcomes)
 
 
 def reconcile_workloads(
@@ -126,23 +134,33 @@ def _reconcile_workload(connection: sqlite3.Connection, workload: "Workload") ->
 
 def _mark_image_discovered(connection: sqlite3.Connection, image: "ContainerImage") -> bool:
     """Records that this digest is known, and reports whether it still needs
-    scanning. A digest is scanned exactly once, permanently - this is what
-    that decision looks like, made observable via `logger` rather than left
-    for a reader to assume from the absence of a call.
+    scanning - claiming it for scanning, under the caller's lock, if so.
+
+    The claim is what keeps two reconcile passes racing each other - e.g.
+    the periodic loop's immediate first tick overlapping a manual rescan -
+    from both deciding the same digest is pending and scanning it twice:
+    `scanned_at` alone does not distinguish "pending" from "another pass is
+    already scanning this," since a real Trivy scan can run for minutes
+    outside this lock. `scan_pending_images` releases the claim if the scan
+    fails, so a transient failure is still retried on the next reconcile.
     """
-    row = connection.execute("SELECT scanned_at FROM images WHERE digest = ?", (image.digest,)).fetchone()
+    row = connection.execute("SELECT scanned_at, scanning FROM images WHERE digest = ?", (image.digest,)).fetchone()
     if row is not None:
         if row["scanned_at"] is not None:
             logger.info("image %s already scanned, skipping", image.digest)
             return False
-        logger.info("image %s discovered previously but not yet scanned", image.digest)
+        if row["scanning"]:
+            logger.info("image %s already claimed by another in-flight scan, skipping", image.digest)
+            return False
+        connection.execute("UPDATE images SET scanning = 1 WHERE digest = ?", (image.digest,))
+        logger.info("image %s discovered previously but not yet scanned, claiming", image.digest)
         return True
 
     connection.execute(
-        "INSERT INTO images (digest, repository, scanned_at) VALUES (?, ?, NULL)",
+        "INSERT INTO images (digest, repository, scanned_at, scanning) VALUES (?, ?, NULL, 1)",
         (image.digest, image.repository),
     )
-    logger.info("image %s newly discovered, needs scanning", image.digest)
+    logger.info("image %s newly discovered, claiming for scanning", image.digest)
     return True
 
 
@@ -151,25 +169,34 @@ def scan_pending_images(
     ports: "Ports",
     images: list["ContainerImage"],
     store: "Callable[[sqlite3.Connection, str, list[Vulnerability]], None] | None" = None,
+    release: "Callable[[sqlite3.Connection, str], None] | None" = None,
 ) -> None:
     """Scans each pending image and stores its result. A failed scan is
     logged and skipped rather than raised, so one bad image does not stop
-    the rest and is simply retried on the next reconcile - its digest was
-    never marked scanned.
+    the rest; its scan claim is released so it is retried on the next
+    reconcile, rather than being stuck claimed forever.
 
-    `store` is a seam for callers that hold a lock around `connection` (see
-    aidevops.app): scanning itself must not happen while that lock is
-    held - a real Trivy scan is a slow subprocess call - only the write
-    that `store` performs needs it. Defaults to `store_scan_result`.
+    `store` and `release` are seams for callers that hold a lock around
+    `connection` (see aidevops.app): scanning itself must not happen while
+    that lock is held - a real Trivy scan is a slow subprocess call - only
+    the writes they perform need it. Default to `store_scan_result` and
+    `release_scan_claim`.
     """
     store = store or store_scan_result
+    release = release or release_scan_claim
     for image in images:
         try:
             vulnerabilities = ports.image_scanner.scan(image)
         except Exception:
             logger.exception("scan failed for image %s, will retry next reconcile", image.digest)
+            release(connection, image.digest)
             continue
         store(connection, image.digest, vulnerabilities)
+
+
+def release_scan_claim(connection: sqlite3.Connection, digest: str) -> None:
+    connection.execute("UPDATE images SET scanning = 0 WHERE digest = ?", (digest,))
+    connection.commit()
 
 
 def store_scan_result(connection: sqlite3.Connection, digest: str, vulnerabilities: list["Vulnerability"]) -> None:
@@ -193,7 +220,7 @@ def store_scan_result(connection: sqlite3.Connection, digest: str, vulnerabiliti
         )
 
     connection.execute(
-        "UPDATE images SET scanned_at = datetime('now') WHERE digest = ?",
+        "UPDATE images SET scanned_at = datetime('now'), scanning = 0 WHERE digest = ?",
         (digest,),
     )
     connection.commit()

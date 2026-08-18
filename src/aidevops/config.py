@@ -16,6 +16,8 @@ class Settings:
     database_path: str
     inventory_period_seconds: float
     prometheus_url: str
+    deepseek_api_key: str
+    deepseek_base_url: str
 
     @classmethod
     def from_env(cls) -> Settings:
@@ -23,4 +25,6 @@ class Settings:
             database_path=os.environ.get("DATABASE_PATH") or "aidevops.db",
             inventory_period_seconds=float(os.environ.get("INVENTORY_PERIOD_SECONDS") or 60.0),
             prometheus_url=os.environ.get("PROMETHEUS_URL") or "http://localhost:9090",
+            deepseek_api_key=os.environ.get("DEEPSEEK_API_KEY") or "",
+            deepseek_base_url=os.environ.get("DEEPSEEK_BASE_URL") or "https://api.deepseek.com",
         )

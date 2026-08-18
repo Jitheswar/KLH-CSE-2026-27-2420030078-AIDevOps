@@ -24,10 +24,18 @@ CREATE TABLE IF NOT EXISTS workload_pods (
     pod_name TEXT NOT NULL
 );
 
+-- `scanning` is a claim, distinct from `scanned_at`: reconcile_workloads
+-- sets it the moment a pass decides an image needs scanning, under
+-- db_lock, so a second reconcile pass racing the first - e.g. the
+-- periodic loop's immediate first tick overlapping a manual rescan - sees
+-- the claim and does not queue the same digest for a second, redundant
+-- scan. A failed scan clears the claim so the next reconcile retries it -
+-- see aidevops.reconcile.
 CREATE TABLE IF NOT EXISTS images (
     digest TEXT PRIMARY KEY,
     repository TEXT NOT NULL,
-    scanned_at TEXT
+    scanned_at TEXT,
+    scanning INTEGER NOT NULL DEFAULT 0
 );
 
 CREATE TABLE IF NOT EXISTS workload_images (
@@ -56,6 +64,33 @@ CREATE TABLE IF NOT EXISTS vulnerabilities (
 CREATE TABLE IF NOT EXISTS candidate_priorities (
     cve_id TEXT PRIMARY KEY,
     base_priority INTEGER NOT NULL
+);
+
+-- Whether a Workload currently carries an Exposure Signal, per the
+-- fire-after-2/clear-after-3 hysteresis in aidevops.exposure_signal. The
+-- detection loop recomputes this from scratch on every pass - see
+-- aidevops.detection - so this table is a cache of that computation for the
+-- queue and Workload detail views to read, not state the loop accumulates
+-- into incrementally.
+CREATE TABLE IF NOT EXISTS exposure_signals (
+    workload_id INTEGER PRIMARY KEY REFERENCES workloads (id) ON DELETE CASCADE,
+    active INTEGER NOT NULL DEFAULT 0
+);
+
+-- Per ADR-0004, cached keyed on the CVE, the image, and the Workload's
+-- Exposure Signal state (see aidevops.domain.ExposureSignalState.cache_key)
+-- so a signal transition invalidates exactly the Triages it should, simply
+-- by changing which row a lookup lands on. `failed` rows are retried on the
+-- next reconcile rather than treated as a permanent cache hit, so a
+-- transient model outage self-heals.
+CREATE TABLE IF NOT EXISTS triage_results (
+    cve_id TEXT NOT NULL,
+    image_digest TEXT NOT NULL,
+    exposure_signal_state TEXT NOT NULL,
+    adjustment INTEGER NOT NULL,
+    rationale TEXT NOT NULL,
+    failed INTEGER NOT NULL DEFAULT 0,
+    PRIMARY KEY (cve_id, image_digest, exposure_signal_state)
 );
 """
 
