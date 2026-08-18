@@ -1,0 +1,8 @@
+{
+  "recorded_at": "2026-08-18T03:17:03.327867+00:00",
+  "quiet_phase_seconds": 1200.0,
+  "quiet_observations": 40,
+  "false_positives": 0,
+  "detection_latency_seconds": 33.441008,
+  "detection_bound_seconds": 360
+}

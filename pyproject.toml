@@ -27,3 +27,6 @@ packages = ["src/aidevops"]
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]
+markers = [
+    "live: Seam B tests against a real cluster (see tests/test_seam_b_live.py). Excluded from `make test`; run with `make test-live`.",
+]

@@ -1,4 +1,4 @@
-.PHONY: run test tools cluster-up seed cluster-down prometheus-up scenario-miner-build scenario-miner-start scenario-miner-stop
+.PHONY: run test test-live tools cluster-up seed cluster-down prometheus-up scenario-miner-build scenario-miner-start scenario-miner-stop
 
 export PATH := $(CURDIR)/bin:$(PATH)
 
@@ -14,7 +14,15 @@ run: tools
 	uv run $(if $(wildcard .env),--env-file .env,) uvicorn aidevops.main:app --app-dir src --reload
 
 test:
-	uv run pytest
+	uv run pytest -m "not live"
+
+# Seam B: the two tests that run against a real cluster (see
+# tests/test_seam_b_live.py). Needs `make cluster-up seed prometheus-up`
+# first; takes tens of minutes, since the detector's Baseline needs that
+# much real telemetry history before it will call anything anomalous.
+# Deliberately excluded from `test` so the fast suite stays fast.
+test-live: tools
+	uv run pytest -m live
 
 # Installs kubectl, kind and trivy into ./bin if they are absent from the
 # development machine.
@@ -63,26 +71,46 @@ scenario-miner-build: tools
 	docker build -t $(SCENARIO_MINER_IMAGE) scenarios/miner
 	kind load docker-image $(SCENARIO_MINER_IMAGE) --name $(CLUSTER_NAME)
 
-# Injects the miner Scenario into the internet-facing nginx Workload and
-# records the moment it comes up as ground truth for the Seam B tests.
+# Injects the miner Scenario into the internet-facing nginx Workload's
+# already-running pod as an ephemeral container, and records the moment it
+# comes up (Kubernetes' own timestamp for it) as ground truth for the Seam B
+# tests. Deliberately not a Deployment template patch: adding a regular
+# container to a pod's template forces Kubernetes to replace the pod under a
+# new name, which throws away every second of Baseline history the detector
+# had built up for it - the exact history a real compromise of the running
+# container would never touch. An ephemeral container attaches to the pod
+# that is already there, so its identity, and the detector's Baseline for
+# it, survive injection - see scenarios/README.md.
 scenario-miner-start: scenario-miner-build
-	kubectl patch deployment $(SCENARIO_MINER_DEPLOYMENT) \
-		--namespace $(SCENARIO_MINER_NAMESPACE) \
-		--type=strategic \
-		-p "$$(sed 's|aidevops-miner-scenario:latest|$(SCENARIO_MINER_IMAGE)|' scenarios/miner/inject-patch.yaml)"
-	kubectl rollout status deployment/$(SCENARIO_MINER_DEPLOYMENT) \
-		--namespace $(SCENARIO_MINER_NAMESPACE) --timeout=120s
-	mkdir -p scenarios/miner/.state
-	date -u +%Y-%m-%dT%H:%M:%SZ > scenarios/miner/.state/started-at
+	# A pod's `status.phase` stays Running while it is Terminating - a
+	# selector alone can still match a just-replaced pod on its way out, so
+	# this picks the newest by creation time rather than the selector's
+	# first match.
+	@pod="$$(kubectl get pod --namespace $(SCENARIO_MINER_NAMESPACE) \
+		--selector=app=$(SCENARIO_MINER_DEPLOYMENT) --sort-by=.metadata.creationTimestamp \
+		-o jsonpath='{.items[-1:].metadata.name}')"; \
+	kubectl debug --namespace $(SCENARIO_MINER_NAMESPACE) "$$pod" \
+		--image=$(SCENARIO_MINER_IMAGE) --image-pull-policy=Never \
+		--container=miner-scenario --attach=false; \
+	until kubectl get pod --namespace $(SCENARIO_MINER_NAMESPACE) "$$pod" \
+		-o jsonpath='{.status.ephemeralContainerStatuses[?(@.name=="miner-scenario")].state.running.startedAt}' \
+		2>/dev/null | grep -q .; do sleep 1; done; \
+	mkdir -p scenarios/miner/.state; \
+	kubectl get pod --namespace $(SCENARIO_MINER_NAMESPACE) "$$pod" \
+		-o jsonpath='{.status.ephemeralContainerStatuses[?(@.name=="miner-scenario")].state.running.startedAt}' \
+		> scenarios/miner/.state/started-at; \
 	echo "Scenario started at $$(cat scenarios/miner/.state/started-at)"
 
 # Removes the miner Scenario and returns the Workload to the shape
-# deploy/seed/01-nginx-legacy.yaml describes.
+# deploy/seed/01-nginx-legacy.yaml describes. An ephemeral container cannot
+# be removed from a running pod once added - a Kubernetes API restriction,
+# not a choice made here - so the only way back to a clean pod is a new one.
+# The Deployment's own pod template was never touched by `-start` above, so
+# restarting its rollout is enough: the fresh pod it creates has no
+# ephemeral container to begin with.
 scenario-miner-stop: tools
-	kubectl patch deployment $(SCENARIO_MINER_DEPLOYMENT) \
-		--namespace $(SCENARIO_MINER_NAMESPACE) \
-		--type=strategic \
-		--patch-file=scenarios/miner/remove-patch.yaml
+	kubectl rollout restart deployment/$(SCENARIO_MINER_DEPLOYMENT) \
+		--namespace $(SCENARIO_MINER_NAMESPACE)
 	kubectl rollout status deployment/$(SCENARIO_MINER_DEPLOYMENT) \
 		--namespace $(SCENARIO_MINER_NAMESPACE) --timeout=120s
 	rm -f scenarios/miner/.state/started-at
