@@ -63,6 +63,13 @@ class ExposureSignal:
     # Baseline.anomaly_magnitude - 0.0 whenever inactive, so the Triage
     # prompt never carries a stale magnitude from a cleared incident.
     magnitude: float = 0.0
+    # The triggering window and the moment the signal fired - the start of
+    # the first of the FIRE_AFTER consecutive anomalous windows, and the end
+    # of the last one, for the Workload detail chart to shade and mark (see
+    # aidevops.charts). Both None whenever inactive, same "no stale value
+    # from a cleared incident" reasoning as `magnitude`.
+    window_start: datetime | None = None
+    fired_at: datetime | None = None
 
 
 def detect_workload_exposure_signal(
@@ -91,6 +98,8 @@ def detect_workload_exposure_signal(
     frozen_training_end: datetime | None = None
     streak_start: datetime | None = None
     step_magnitude = 0.0
+    fired_window_start: datetime | None = None
+    fired_at: datetime | None = None
 
     for step_end in step_ends:
         training_end = frozen_training_end if state.active else step_end
@@ -122,7 +131,16 @@ def detect_workload_exposure_signal(
 
         if state.active and not was_active:
             frozen_training_end = streak_start
+            fired_window_start = streak_start
+            fired_at = step_end
         elif not state.active and was_active:
             frozen_training_end = None
+            fired_window_start = None
+            fired_at = None
 
-    return ExposureSignal(active=state.active, magnitude=step_magnitude if state.active else 0.0)
+    return ExposureSignal(
+        active=state.active,
+        magnitude=step_magnitude if state.active else 0.0,
+        window_start=fired_window_start if state.active else None,
+        fired_at=fired_at if state.active else None,
+    )

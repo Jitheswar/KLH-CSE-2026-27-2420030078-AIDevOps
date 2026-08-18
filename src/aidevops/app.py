@@ -23,7 +23,13 @@ from fastapi.templating import Jinja2Templates
 
 from aidevops.candidates import fetch_vulnerability_rows, score_candidate_set, store_candidate_set
 from aidevops.charts import render_line_chart
-from aidevops.detection import detect_signal_for_workload, list_workloads_with_pods, store_exposure_signal, workload_has_active_exposure_signal
+from aidevops.detection import (
+    detect_signal_for_workload,
+    get_workload_exposure_signal_window,
+    list_workloads_with_pods,
+    store_exposure_signal,
+    workload_has_active_exposure_signal,
+)
 from aidevops.ports.cluster_inventory import ClusterInventoryPort
 from aidevops.ports.image_scanner import ImageScannerPort
 from aidevops.ports.telemetry import TelemetryPort
@@ -129,7 +135,9 @@ def _locked_detect(connection: sqlite3.Connection, ports: Ports, db_lock: thread
         if signal is None:
             continue
         with db_lock:
-            transitioned = store_exposure_signal(connection, workload.id, signal.active, signal.magnitude)
+            transitioned = store_exposure_signal(
+                connection, workload.id, signal.active, signal.magnitude, signal.window_start, signal.fired_at
+            )
 
         # A fire or clear transition re-Triages this Workload's
         # Vulnerabilities right now, in this same detection pass - not
@@ -218,6 +226,10 @@ def create_app(
         now = datetime.now()
         telemetry, baseline = get_workload_telemetry_and_baseline(ports.telemetry, pod_names, end=now)
 
+        with db_lock:
+            exposure_signal_active = workload_has_active_exposure_signal(connection, namespace, name)
+            signal_window = get_workload_exposure_signal_window(connection, namespace, name)
+
         charts = None
         if telemetry.available:
             replica_count = len(pod_names)
@@ -226,12 +238,11 @@ def create_app(
                     telemetry.samples,
                     metric,
                     band=scaled_band(baseline, metric, replica_count) if baseline is not None else None,
+                    window_start=signal_window.window_start,
+                    fired_at=signal_window.fired_at,
                 )
                 for metric in ("cpu", "network_transmit", "network_receive")
             }
-
-        with db_lock:
-            exposure_signal_active = workload_has_active_exposure_signal(connection, namespace, name)
 
         return templates.TemplateResponse(
             request,

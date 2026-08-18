@@ -4,29 +4,87 @@
     <meta charset="utf-8">
     <title>{{ namespace }}/{{ name }} - Contextual Priority Platform</title>
     <style>
+        {% include "_shared_style.html" %}
+        a.back { color: var(--muted); text-decoration: none; font-weight: 600; }
+        a.back:hover { color: var(--ink); }
+        h1 { font-size: 1.9rem; margin: 0.6rem 0 0.9rem; letter-spacing: -0.01em; }
+        h2 { font-size: 1.15rem; margin: 1.6rem 0 0.4rem; }
+
         .exposure-signal-badge {
+            gap: 0.4em;
+            padding: 0.35em 0.9em;
+            border-radius: 0.4em;
+            font-size: 1.1rem;
+        }
+
+        .notice-warn {
             display: inline-block;
-            padding: 0.2em 0.6em;
-            border-radius: 0.3em;
-            background: #b00020;
-            color: #fff;
-            font-weight: bold;
+            margin: 0.6rem 0;
+            padding: 0.5em 0.9em;
+            border-radius: 0.4em;
+            background: var(--warn-bg);
+            color: var(--warn);
+            font-weight: 600;
+        }
+        .notice-muted {
+            font-size: 1.1rem;
+            color: var(--muted);
+        }
+
+        section { margin-bottom: 1.6rem; }
+        .telemetry-chart {
+            width: 100%;
+            height: auto;
+            max-width: 900px;
+            color: #1f6feb;
+            background: #fafbfc;
+            border: 1px solid var(--line);
+            border-radius: 0.4em;
+        }
+        .chart-legend {
+            display: flex;
+            flex-wrap: wrap;
+            gap: 1.2rem;
+            margin-top: 0.4rem;
+            font-size: 0.85rem;
+            color: var(--muted);
+        }
+        .chart-legend .swatch {
+            display: inline-block;
+            width: 0.9em;
+            height: 0.9em;
+            margin-right: 0.4em;
+            vertical-align: middle;
+            border-radius: 0.15em;
+        }
+        .chart-legend .swatch.baseline-swatch { background: #1f6feb; opacity: 0.15; }
+        .chart-legend .swatch.trigger-swatch { background: var(--danger); opacity: 0.12; }
+        .chart-legend .swatch.fired-swatch {
+            background: repeating-linear-gradient(to bottom, var(--danger) 0 4px, transparent 4px 7px);
+            opacity: 1;
         }
     </style>
 </head>
 <body>
-    <p><a href="/">&larr; Back to queue</a></p>
+    <p><a class="back" href="/">&larr; Back to queue</a></p>
     <h1>{{ namespace }}/{{ name }}</h1>
     {% if exposure_signal_active %}
     <p id="exposure-signal" class="exposure-signal-badge">&#9888; Exposure Signal active</p>
     {% endif %}
     {% if telemetry_available %}
     {% if baseline_establishing %}
-    <p id="baseline-establishing">Still establishing a Baseline for this Workload.</p>
+    <p id="baseline-establishing" class="notice-warn">Still establishing a Baseline for this Workload.</p>
     {% endif %}
     <section>
         <h2>CPU</h2>
         {{ charts.cpu | safe }}
+        {% if exposure_signal_active %}
+        <p class="chart-legend">
+            <span><span class="swatch baseline-swatch"></span>Baseline band</span>
+            <span><span class="swatch trigger-swatch"></span>Triggering window</span>
+            <span><span class="swatch fired-swatch"></span>Signal fired</span>
+        </p>
+        {% endif %}
     </section>
     <section>
         <h2>Network transmit</h2>
@@ -37,7 +95,7 @@
         {{ charts.network_receive | safe }}
     </section>
     {% else %}
-    <p id="telemetry-unavailable">Telemetry is temporarily unavailable.</p>
+    <p id="telemetry-unavailable" class="notice-muted">Telemetry is temporarily unavailable.</p>
     {% endif %}
 </body>
 </html>

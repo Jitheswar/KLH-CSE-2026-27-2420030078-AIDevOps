@@ -32,6 +32,15 @@ class QueueRow:
     triage_failed: bool
     affected_workloads: list[AffectedWorkload]
 
+    @property
+    def severity_score(self) -> int:
+        """Severity mapped onto the same 0-100 scale as Contextual Priority
+        (see aidevops.candidates.SEVERITY_SCORE), purely so the queue can
+        draw the two side by side and let their divergence read visually -
+        per the spec, without the operator doing arithmetic.
+        """
+        return SEVERITY_SCORE.get(self.severity.upper(), SEVERITY_SCORE["UNKNOWN"])
+
 
 @dataclass(frozen=True)
 class _TriageInfo:

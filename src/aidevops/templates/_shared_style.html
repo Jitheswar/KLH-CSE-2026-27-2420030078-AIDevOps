@@ -1,0 +1,37 @@
+:root {
+    --ink: #1a1a1a;
+    --paper: #ffffff;
+    --muted: #5b6270;
+    --line: #dde1e7;
+    --danger: #b00020;
+    --danger-bg: #fdecef;
+    --warn: #8a5a00;
+    --warn-bg: #fff6e5;
+}
+* { box-sizing: border-box; }
+body {
+    margin: 0;
+    padding: 1.5rem 2rem 3rem;
+    background: var(--paper);
+    color: var(--ink);
+    font-family: -apple-system, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
+    font-size: 17px;
+    line-height: 1.4;
+}
+/* The Exposure Signal badge's shared core - same color, weight and pulse
+   wherever an operator meets it. Each page then sets its own size: a
+   small inline pill in a dense queue row, a larger standalone badge on a
+   Workload's own page - see each template's own <style> block. */
+.exposure-signal-badge {
+    display: inline-flex;
+    align-items: center;
+    color: #fff;
+    font-weight: 800;
+    letter-spacing: 0.02em;
+    background: var(--danger);
+    animation: pulse-signal 1.6s ease-in-out infinite;
+}
+@keyframes pulse-signal {
+    0%, 100% { box-shadow: 0 0 0 0 rgba(176, 0, 32, 0.55); }
+    50% { box-shadow: 0 0 0 0.5em rgba(176, 0, 32, 0); }
+}
