@@ -2,6 +2,8 @@
 
 _Project title: Contextual Priority Platform_
 
+[![tests](https://github.com/Jitheswar/KLH-CSE-2026-27-2420030078-AIDevOps/actions/workflows/tests.yml/badge.svg)](https://github.com/Jitheswar/KLH-CSE-2026-27-2420030078-AIDevOps/actions/workflows/tests.yml)
+
 ## Team
 
 | Name | ID Number |
